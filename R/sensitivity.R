@@ -559,7 +559,11 @@ integrate.spatial.sensitivity.covariates <- function(object, abmodel.covs, depth
     cat("Computing sensitivity models\n")
     # Split data into two halves for later hold-out training
     ret[, hold.out := rbinom(nrow(.SD), size=1, prob=1/2)]
-    # Each call to model.somatic.sensitivity updates 
+    # Each call to model.somatic.sensitivity updates `ret`.
+    # IMPORTANT: the returned model objects are HUGE (~1 GB each) because copies
+    # of the entire input dataset are retained along with several O(#rows)-sized
+    # calculations.  Recomputing these models only takes a few seconds given `ret`,
+    # so it makes very little sense to record these in the SCAN2 object.
     models <- do.call(c,
         lapply(c('snv', 'indel'), function(muttype)
             lapply(c('maj', 'min'), function(alleletype)
@@ -568,6 +572,9 @@ integrate.spatial.sensitivity.covariates <- function(object, abmodel.covs, depth
         )
     )
     names(models) <- c('snv.maj', 'snv.min', 'indel.maj', 'indel.min')
+    # As noted above, models are very large. Just store the coefficients for
+    # convenience. If the full model is desired, rerun model.somatic.sensitivity.
+    models <- lapply(models, coefs)
 
     burdens <- setNames(lapply(c('snv', 'indel'), function(mt)
         estimate.burden.by.spatial.sensitivity(data=ret, muttype=mt)),
