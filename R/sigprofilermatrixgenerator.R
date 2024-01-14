@@ -2,9 +2,14 @@
 # note that sigprofilermatrixgenerator always generates the most granular classification
 # (e.g., SBS6144 for SNVs and ID415 for indels)
 # mostly useful for indel classification, but also good for doing TSB on SNVs
+#
+# `df` must be a data.table
 classify.muts <- function(df, genome.string, spectype='SNV',
     sample.name='dummy', save.plot=F, auto.delete=T, verbose=FALSE)
 {
+    if (!data.table::is.data.table(df))
+        stop('argument `df` must be a data.table')
+
     if (nrow(df) == 0)
         return(df)
 
@@ -72,8 +77,8 @@ classify.muts <- function(df, genome.string, spectype='SNV',
         colclasses <- c(V2='character')
     }
 
-    annots <- do.call(rbind, lapply(annot.files, function(f) {
-        tryCatch(x <- read.table(f, header=F, stringsAsFactors=FALSE,
+    annots <- data.table::rbindlist(lapply(annot.files, function(f) {
+        tryCatch(x <- fread(f, header=F, stringsAsFactors=FALSE,
                 colClasses=colclasses),
             error=function(e) NULL)
     }))
@@ -85,10 +90,10 @@ classify.muts <- function(df, genome.string, spectype='SNV',
 
     if (spectype == 'ID') {
         colnames(annots) <- c('sample', 'chr', 'pos', 'iclass', 'refnt', 'altnt', 'unknown')
-        newdf <- plyr::join(df, annots[2:6], by = colnames(annots)[-c(1, 4, 7)])
+        newdf <- annots[df,,on=.(chr, pos, refnt, altnt)]
     } else if (spectype == 'SNV') {
         colnames(annots) <- c('sample', 'chr', 'pos', 'iclass', 'unknown')
-        newdf <- plyr::join(df, annots[2:4], by = colnames(annots)[-c(1, 4, 5)])
+        newdf <- annots[df,,on=.(chr, pos)]
     }
 
     if (save.plot) {
@@ -103,8 +108,8 @@ classify.muts <- function(df, genome.string, spectype='SNV',
 
     if (auto.delete)
         unlink(spmgd, recursive=TRUE)
-    df$muttype <- newdf$iclass
-    df
+
+    newdf$iclass
 }
 
 genome.to.spmgr.format <- c(
@@ -115,6 +120,8 @@ genome.to.spmgr.format <- c(
 # new version: just returns the vector of indel classes
 # FORCES ID83 FOR NOW
 # N.B.: don't provide a default genome.string; it's dangerous.
+#
+# `df` must be a data.table
 classify.indels <- function(df, genome.string, sample.name='dummy', save.plot=F, auto.delete=T, verbose=FALSE) {
     # SigProfilerMatrixGenerator returns ID415 by default, which is ID83 plus one of
     # 5 transcription strand states: B, N, Q, T, U. The format of the string is, e.g.,
@@ -122,7 +129,7 @@ classify.indels <- function(df, genome.string, sample.name='dummy', save.plot=F,
     # Removing the first two characters "U:" leaves an ID83 type.
     id415 <- classify.muts(df=df, genome.string=genome.to.spmgr.format[genome.string],
         spectype='ID', sample.name=sample.name, save.plot=save.plot,
-        auto.delete=auto.delete, verbose=verbose)$muttype
+        auto.delete=auto.delete, verbose=verbose)
     # id83() converts strings into a factor
-    id83(substr(id415, 3, nchar(id415[1])))
+    id83(substr(id415, 3, nchar(id415)))
 }

@@ -282,11 +282,14 @@ make.indel.perms.helper <- function(spectrum,
 
     # d needs to be sorted before classify.indels. use genome.object
     # to keep chroms in expected order.
-    d <- do.call(rbind, lapply(seqnames(genome.object), function(chr) {
+    # NOTE: rbindlist converts data.frame -> data.table, which is now necessary
+    # for classify.indels.
+    d <- data.table::rbindlist(lapply(seqnames(genome.object), function(chr) {
         dd <- d[d$chr == chr, ]
         dd[order(dd$pos), ]
     }))
     d$mutsig <- classify.indels(d, genome.string=genome.string, verbose=!quiet)
+    data.table::setDF(d)  # return to data.frame since the rest of the permtool code predated data.table usage
     if (!quiet) {
         print(head(d))
         cat(nrow(ind), '\n')
