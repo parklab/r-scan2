@@ -5,6 +5,7 @@ abmodel.fit.one.chrom <- function(path, sc.sample, chrom, genome.seqinfo,
     hsnp.tilesize=100, n.tiles=250,
     refine.n.steps=4, refine.top.n=50,
     logp.samples.per.step=20000,
+    hsnp.tile.downsample.seed=1,
     alim=c(-7, 2), blim=c(2, 4), clim=c(-7, 2), dlim=c(2, 6))
 {
     chrom <- as.character(chrom)
@@ -18,7 +19,8 @@ abmodel.fit.one.chrom <- function(path, sc.sample, chrom, genome.seqinfo,
     # GRanges interval that covers the whole chromosome
     region <- as(genome.seqinfo, 'GRanges')[chrom,]
     hsnps <- read.training.hsnps(path=path, sample.id=sc.sample, region=region)
-    hsnps <- abmodel.downsample.hsnps(hsnps, hsnp.tilesize=hsnp.tilesize, n.tiles=n.tiles, verbose=TRUE)
+    hsnps <- abmodel.downsample.hsnps(hsnps, hsnp.tilesize=hsnp.tilesize, n.tiles=n.tiles,
+        seed=hsnp.tile.downsample.seed, verbose=TRUE)
 
     refine.records <- list()
     for (i in 1:refine.n.steps) {
@@ -45,13 +47,16 @@ abmodel.fit.one.chrom <- function(path, sc.sample, chrom, genome.seqinfo,
 }
 
 
-abmodel.downsample.hsnps <- function(hsnps, hsnp.tilesize=100, n.tiles=250, verbose=TRUE) {
+# As name suggests, a random sample is taken here. Must expose a seed so
+# results are reproducible.
+abmodel.downsample.hsnps <- function(hsnps, hsnp.tilesize=100, n.tiles=250, seed=1, verbose=TRUE) {
     if (is.null(n.tiles)) {
         if (verbose) cat('skipping downsampling; n.tiles=NULL\n')
         return(hsnps)
     }
     # Now subset by tiles. This is critical for compute efficiency (>10-fold
     # reduction in runtime with very similar results).
+    set.seed(seed)
     hsnps$tile.id <- head(rep(1:nrow(hsnps), each=hsnp.tilesize), nrow(hsnps))
     max.tile <- max(hsnps$tile.id)
     tiles.to.use <- sort(sample(max.tile, min(max.tile, n.tiles)))
