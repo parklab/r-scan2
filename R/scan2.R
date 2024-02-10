@@ -741,7 +741,7 @@ setMethod("update.static.filter.params", "SCAN2", function(object, fdr.prior.mod
                     object@static.filter.params[[mt]][[p]] <- new[[p]]
                 }
             } else {
-                if (!quiet < 2) cat(paste0("    (",mt,") ignoring unrecognized parameter ", p, '\n'))
+                if (quiet < 2) cat(paste0("    (",mt,") ignoring unrecognized parameter ", p, '\n'))
             }
         }
     }
@@ -761,43 +761,43 @@ setMethod("update.static.filter.params", "SCAN2", function(object, fdr.prior.mod
         mode=ifelse(missing(compute.static.filters.mode), object@static.filter.params$mode, compute.static.filters.mode))
 
     if (!is.null(slot(object, 'fdr.prior.data'))) {
-        if (!quiet < 2) cat("    voiding N_T/N_A FDR prior calculations\n")
+        if (quiet < 2) cat("    voiding N_T/N_A FDR prior calculations\n")
         old.mode <- object@fdr.prior.data$mode
         object@fdr.prior.data <- NULL
         object@gatk[, nt := NA]
         object@gatk[, na := NA]
         object <- compute.fdr.prior.data(object,
             mode=ifelse(missing(fdr.prior.mode), old.mode, fdr.prior.mode),
-            quiet=quiet < 1)
+            quiet=quiet > 0)
     }
     if (!is.null(slot(object, 'fdr'))) {
-        if (!quiet < 2) cat("    voiding per-locus FDR calculations\n")
+        if (quiet < 2) cat("    voiding per-locus FDR calculations\n")
         old.mode <- object@fdr$mode
         object@fdr <- NULL
         object@gatk[, lysis.fdr := NA]
         object@gatk[, mda.fdr := NA]
         object <- compute.fdr(object,
             mode=ifelse(missing(fdr.mode), old.mode, fdr.mode),
-            quiet=quiet < 1)
+            quiet=quiet > 0)
     }
     if (!is.null(slot(object, 'call.mutations'))) {
-        if (!quiet < 2) cat("    recalling all mutations\n")
+        if (quiet < 2) cat("    recalling all mutations\n")
         object@gatk[, pass := NA]
         object@gatk[, training.pass := NA]
         object <- call.mutations(object)
     }
     if (!is.null(slot(object, 'mutburden'))) {
-        if (!quiet < 2) cat("    recalling all mutations\n")
+        if (quiet < 2) cat("    recalling all mutations\n")
         object@mutburden <- NULL
         object <- compute.mutburden(object)
     }
     if (!is.null(slot(object, 'mutsig.rescue'))) {
-        if (!quiet < 2) cat("    voiding mutation signature-based rescue calls\n")
+        if (quiet < 2) cat("    voiding mutation signature-based rescue calls\n")
         object@mutsig.rescue <- NULL
         object@gatk[, rescue := NA]
     }
     if (!is.null(slot(object, 'spatial.sensitivity'))) {
-        if (!quiet < 2) cat("    voiding spatial sensitivity estimates\n")
+        if (quiet < 2) cat("    voiding spatial sensitivity estimates\n")
         object@spatial.sensitivity <- NULL
     }
 
