@@ -24,8 +24,10 @@ integrated.table.meta.cols <- c(
     balt='integer',
     bulk.dp='integer',
     bulk.af='numeric',
+    bulk.binom.prob='numeric',
     tref='integer',
     talt='integer',
+    tcells='integer',
     muttype='character',
     mutsig='character',
     balt.lowmq='integer',
@@ -139,6 +141,10 @@ annotate.gatk.counts <- function(gatk.meta, gatk, bulk.sample, sc.samples, legac
         list(gatk[[bulk.idx]], gatk[[bulk.idx+1]], gatk[[bulk.idx+2]])]
     gatk.meta[, c('bulk.dp', 'bulk.af') := list(bref+balt, balt/(bref+balt))]
 
+    # One-sided binomial test that the site has 50% VAF in bulk. Alt hypothesis
+    # is that VAF < 50% (i.e., a somatic mosaic).
+    gatk.meta[, 'bulk.binom.prob' := pbinom(q=balt, size=bulk.dp, prob=1/2)]
+
     refs <- c()
     alts <- c()
     if (legacy) {
@@ -158,9 +164,12 @@ annotate.gatk.counts <- function(gatk.meta, gatk, bulk.sample, sc.samples, legac
     # especially bad when data.tables are nested in data.table formulae.
     tref.var <- rowSums(as.matrix(gatk[, ..refs])) - gatk.meta$bref
     talt.var <- rowSums(as.matrix(gatk[, ..alts])) - gatk.meta$balt
+    just.cell.alts <- which(colnames(gatk) %in% sc.samples)
+    # how many cells have any supporting reads for this site
+    tcells.var <- rowSums(as.matrix(gatk[, ..just.cell.alts]) > 0)
 
     # Annotate the total number of single cell alt and ref reads across all SC samples.
-    gatk.meta[, c('tref', 'talt') := list(tref.var, talt.var)]
+    gatk.meta[, c('tref', 'talt', 'tcells') := list(tref.var, talt.var, tcells.var)]
     gatk.meta
 }
 
@@ -283,7 +292,8 @@ annotate.gatk.panel <- function(gatk, panel.path, region=NULL, quiet=FALSE) {
 #
 # XXX: any filter not dependent on specific single cell info (like min.bulk.dp)
 # should really be applied here.
-annotate.gatk.candidate.loci <- function(gatk, snv.min.bulk.dp, snv.max.bulk.alt, snv.max.bulk.af, indel.min.bulk.dp, indel.max.bulk.alt, indel.max.bulk.af, mode=c('new', 'legacy')) {
+annotate.gatk.candidate.loci <- function(gatk, snv.min.bulk.dp, snv.max.bulk.alt, snv.max.bulk.af, snv.max.bulk.binom.prob, indel.min.bulk.dp, indel.max.bulk.alt, indel.max.bulk.af, indel.max.bulk.binom.prob, mode=c('new', 'legacy'))
+{
     mode <- match.arg(mode)
 
     # In legacy mode, bulk depth and bulk alt reads in the low MMQ GATK table
@@ -291,21 +301,23 @@ annotate.gatk.candidate.loci <- function(gatk, snv.min.bulk.dp, snv.max.bulk.alt
     # from single cell to single cell, we prefer to handle them here.
     # bulk.af was never checked because max bulk alt was always 0 in legacy.
     if (mode == 'new') {
-        snv.allow.bulk.gt <- snv.max.bulk.alt > 0 | snv.max.bulk.af > 0
-        indel.allow.bulk.gt <- indel.max.bulk.alt > 0 | indel.max.bulk.af > 0
+        snv.allow.bulk.gt <- snv.max.bulk.alt > 0 | snv.max.bulk.af > 0 | snv.max.bulk.binom.prob > 0
+        indel.allow.bulk.gt <- indel.max.bulk.alt > 0 | indel.max.bulk.af > 0 | indel.max.bulk.binom.prob > 0
 
         gatk[, somatic.candidate :=
             ((muttype == 'snv' & balt <= snv.max.bulk.alt & 
-                    bulk.dp >= snv.min.bulk.dp &
-                    !is.na(bulk.af) & bulk.af <= snv.max.bulk.af &
-                    (is.na(balt.lowmq) | balt.lowmq <= snv.max.bulk.alt) &
-                    # to continue old SCAN2 (intended for non-clonal calling) behavior, require
-                    # bulk.gt==0/0 when the user doesn't allow any bulk read support.
-                    (snv.allow.bulk.gt | bulk.gt == '0/0')
+                bulk.dp >= snv.min.bulk.dp &
+                !is.na(bulk.af) & bulk.af <= snv.max.bulk.af &
+                !is.na(bulk.binom.prob) & bulk.binom.prob <= snv.max.bulk.binom.prob &
+                (is.na(balt.lowmq) | balt.lowmq <= snv.max.bulk.alt) &
+                # to continue old SCAN2 (intended for non-clonal calling) behavior, require
+                # bulk.gt==0/0 when the user doesn't allow any bulk read support.
+                (snv.allow.bulk.gt | bulk.gt == '0/0')
             ) |
             (muttype == 'indel' & balt <= indel.max.bulk.alt &
                 bulk.dp >= indel.min.bulk.dp &
                 !is.na(bulk.af) & bulk.af <= indel.max.bulk.af &
+                !is.na(bulk.binom.prob) & bulk.binom.prob <= indel.max.bulk.binom.prob &
                 (is.na(balt.lowmq) | balt.lowmq <= indel.max.bulk.alt) &
                 (indel.allow.bulk.gt | bulk.gt == '0/0')
             )) &

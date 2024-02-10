@@ -16,7 +16,6 @@ setClass("SCAN2", slots=c(
     bulk='character',
     gatk="null.or.dt.or.raw",
     integrated.table.path='null.or.character',
-    resampled.training.data="null.or.list",
     ab.fits='null.or.df',
     static.filter.params='null.or.list',
     ab.estimates='null.or.df',
@@ -747,9 +746,11 @@ setMethod("update.static.filter.params", "SCAN2", function(object, fdr.prior.mod
         snv.min.bulk.dp=sfp$snv$min.bulk.dp,
         snv.max.bulk.alt=sfp$snv$max.bulk.alt,
         snv.max.bulk.af=sfp$snv$max.bulk.af,
+        snv.max.bulk.binom.prob=sfp$snv$max.bulk.binom.prob,
         indel.min.bulk.dp=sfp$indel$min.bulk.dp,
         indel.max.bulk.alt=sfp$indel$max.bulk.alt,
-        indel.max.bulk.af=sfp$indel$max.bulk.af)
+        indel.max.bulk.af=sfp$indel$max.bulk.af,
+        indel.max.bulk.binom.prob=sfp$indel$max.bulk.binom.prob,
     object <- compute.static.filters(object,
         mode=ifelse(missing(compute.static.filters.mode), object@static.filter.params$mode, compute.static.filters.mode))
 

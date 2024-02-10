@@ -82,10 +82,12 @@ testpipe <- function(test.data=c('legacy_tiny', 'legacy_chr22', 'legacy_custom')
         # new support for clonal mutations: allow alt read support in bulk. but legacy did not allow this.
         snv.max.bulk.alt=0,
         snv.max.bulk.af=0,
+        snv.max.bulk.binom.prob=0,
         snv.min.bulk.dp=6,
         indel.max.bulk.alt=0, 
         indel.max.bulk.af=0, 
         indel.min.bulk.dp=10,
+        indel.max.bulk.binom.prob=0,
         genome='hs37d5', legacy=legacy, grs=grs)
     write.integrated.table(inttab=x$gatk, out.tab=int.tab.path, out.tab.gz=int.tab.gz.path)
 

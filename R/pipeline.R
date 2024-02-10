@@ -129,8 +129,8 @@ run.pipeline <- function(
 make.integrated.table <- function(mmq60.tab, mmq1.tab, phased.vcf,
     bulk.sample, sc.samples, genome,
     snv.min.bulk.dp, indel.min.bulk.dp,
-    snv.max.bulk.alt=0, snv.max.bulk.af=0,
-    indel.max.bulk.alt=0, indel.max.bulk.af=0,
+    snv.max.bulk.alt=0, snv.max.bulk.af=0, snv.max.bulk.binom.prob=0,
+    indel.max.bulk.alt=0, indel.max.bulk.af=0, indel.max.bulk.binom.prob=0,
     panel=NULL,
     grs=genome.string.to.tiling(genome, tilewidth=10e6, group='auto'),
     legacy=FALSE, quiet=TRUE, report.mem=FALSE)
@@ -164,9 +164,11 @@ make.integrated.table <- function(mmq60.tab, mmq1.tab, phased.vcf,
                     snv.min.bulk.dp=snv.min.bulk.dp,
                     snv.max.bulk.alt=snv.max.bulk.alt,
                     snv.max.bulk.af=snv.max.bulk.af,
+                    snv.max.bulk.binom.prob=snv.max.bulk.binom.prob,
                     indel.min.bulk.dp=indel.min.bulk.dp,
                     indel.max.bulk.alt=indel.max.bulk.alt,
                     indel.max.bulk.af=indel.max.bulk.af,
+                    indel.max.bulk.binom.prob=indel.max.bulk.binom.prob,
                     mode=ifelse(legacy, 'legacy', 'new'))   # mode=new is still experimental
             }, report.mem=report.mem)
             p(class='sticky', amount=1, pc)
