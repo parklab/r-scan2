@@ -719,9 +719,15 @@ setMethod("compute.static.filters", "SCAN2", function(object, mode=c('new', 'leg
 #   - `compute.static.filters.mode`
 #   - `fdr.prior.mode`
 #   - `fdr.mode`
-setGeneric("update.static.filter.params", function(object, fdr.prior.mode, fdr.mode, compute.static.filters.mode, new.params=list(snv=list(), indel=list()), quiet=FALSE)
+#
+# `quiet`:
+#   0 - report all messages (this function and called functions)
+#   1 - report only messages from this function, suppress messages from called functions
+#       (fcontrol is particularly noisy)
+#   2 - do not report messages
+setGeneric("update.static.filter.params", function(object, fdr.prior.mode, fdr.mode, compute.static.filters.mode, new.params=list(snv=list(), indel=list()), quiet=0)
     standardGeneric("update.static.filter.params"))
-setMethod("update.static.filter.params", "SCAN2", function(object, fdr.prior.mode, fdr.mode, compute.static.filters.mode, new.params=list(snv=list(), indel=list()), quiet=FALSE) {
+setMethod("update.static.filter.params", "SCAN2", function(object, fdr.prior.mode, fdr.mode, compute.static.filters.mode, new.params=list(snv=list(), indel=list()), quiet=0) {
     if (!all(names(new.params) %in% c('snv', 'indel')))
         stop('new.params must be a list containing at least one list named "snv" or "indel"')
 
@@ -731,11 +737,11 @@ setMethod("update.static.filter.params", "SCAN2", function(object, fdr.prior.mod
         for (p in names(new)) {
             if (p %in% names(sfp)) {
                 if (new[p] != sfp[[p]]) {
-                    if (!quiet) cat(paste0("    (",mt,") updating ", p, ": ", sfp[[p]], " -> ", new[[p]], '\n'))
+                    if (quiet < 2) cat(paste0("    (",mt,") updating ", p, ": ", sfp[[p]], " -> ", new[[p]], '\n'))
                     object@static.filter.params[[mt]][[p]] <- new[[p]]
                 }
             } else {
-                if (!quiet) cat(paste0("    (",mt,") ignoring unrecognized parameter ", p, '\n'))
+                if (!quiet < 2) cat(paste0("    (",mt,") ignoring unrecognized parameter ", p, '\n'))
             }
         }
     }
@@ -750,48 +756,48 @@ setMethod("update.static.filter.params", "SCAN2", function(object, fdr.prior.mod
         indel.min.bulk.dp=sfp$indel$min.bulk.dp,
         indel.max.bulk.alt=sfp$indel$max.bulk.alt,
         indel.max.bulk.af=sfp$indel$max.bulk.af,
-        indel.max.bulk.binom.prob=sfp$indel$max.bulk.binom.prob,
+        indel.max.bulk.binom.prob=sfp$indel$max.bulk.binom.prob)
     object <- compute.static.filters(object,
         mode=ifelse(missing(compute.static.filters.mode), object@static.filter.params$mode, compute.static.filters.mode))
 
     if (!is.null(slot(object, 'fdr.prior.data'))) {
-        if (!quiet) cat("    voiding N_T/N_A FDR prior calculations\n")
+        if (!quiet < 2) cat("    voiding N_T/N_A FDR prior calculations\n")
         old.mode <- object@fdr.prior.data$mode
         object@fdr.prior.data <- NULL
         object@gatk[, nt := NA]
         object@gatk[, na := NA]
         object <- compute.fdr.prior.data(object,
             mode=ifelse(missing(fdr.prior.mode), old.mode, fdr.prior.mode),
-            quiet=quiet)
+            quiet=quiet < 1)
     }
     if (!is.null(slot(object, 'fdr'))) {
-        if (!quiet) cat("    voiding per-locus FDR calculations\n")
+        if (!quiet < 2) cat("    voiding per-locus FDR calculations\n")
         old.mode <- object@fdr$mode
         object@fdr <- NULL
         object@gatk[, lysis.fdr := NA]
         object@gatk[, mda.fdr := NA]
         object <- compute.fdr(object,
             mode=ifelse(missing(fdr.mode), old.mode, fdr.mode),
-            quiet=quiet)
+            quiet=quiet < 1)
     }
     if (!is.null(slot(object, 'call.mutations'))) {
-        if (!quiet) cat("    recalling all mutations\n")
+        if (!quiet < 2) cat("    recalling all mutations\n")
         object@gatk[, pass := NA]
         object@gatk[, training.pass := NA]
         object <- call.mutations(object)
     }
     if (!is.null(slot(object, 'mutburden'))) {
-        if (!quiet) cat("    recalling all mutations\n")
+        if (!quiet < 2) cat("    recalling all mutations\n")
         object@mutburden <- NULL
         object <- compute.mutburden(object)
     }
     if (!is.null(slot(object, 'mutsig.rescue'))) {
-        if (!quiet) cat("    voiding mutation signature-based rescue calls\n")
+        if (!quiet < 2) cat("    voiding mutation signature-based rescue calls\n")
         object@mutsig.rescue <- NULL
         object@gatk[, rescue := NA]
     }
     if (!is.null(slot(object, 'spatial.sensitivity'))) {
-        if (!quiet) cat("    voiding spatial sensitivity estimates\n")
+        if (!quiet < 2) cat("    voiding spatial sensitivity estimates\n")
         object@spatial.sensitivity <- NULL
     }
 
