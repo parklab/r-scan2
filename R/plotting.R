@@ -177,10 +177,19 @@ plot.fdr <- function(fc, dps=c(10,20,30,60,100,200), target.fdr=0.1, div=2) {
 }
 
 
-# Plot the AB model in a genomic window with confidence bands.
-# Optionally: plot a candidate/putative sSNV.
-# XXX: TODO: restore the ability to compute GP mu/sd at many additional
-# points in the region to give smooth bands/lines.
+###############################################################################
+# Plot the AB model (w/confidence bands), nearby training hSNPs and candidate
+# sites against genomic position.
+#
+# summary objects only keep a small amount of training hSNPs and candidates
+# around each mutation, so the size of the region that can be shown is smaller.
+#
+# NOTE: `site` plots the `site`th row in the raw data table, whether that is
+# a candidate somatic mutation, germline variant, or not even a valid candidate
+# in this cell. Since the raw data table rows differ, `site` corresponds to
+# different locations in full SCAN2 objects and summary objects!
+###############################################################################
+
 setGeneric("plot.region", function(object, site=NA, chrom=NA, position=NA, upstream=5e4, downstream=5e4, gp.extend=1e5, n.gp.points=100, recompute=TRUE, show.all.candidates=FALSE)
     standardGeneric("plot.region"))
 setMethod("plot.region", "SCAN2", function(object, site=NA, chrom=NA, position=NA,
@@ -189,17 +198,43 @@ setMethod("plot.region", "SCAN2", function(object, site=NA, chrom=NA, position=N
     check.slots(object, c('gatk', 'ab.estimates'))
     if (recompute)
         check.slots(object, 'ab.fits')
+    gatk <- object@gatk
+    ab.fits <- ab.fits(object)
+    helper.plot.region(gatk=gatk, ab.fits=ab.fits, site=site, chrom=chrom, position=position,
+        upstream=upstream, downstream=downstream, gp.extend=gp.extend, n.gp.points=n.gp.points,
+        recompute=recompute, show.all.candidates=show.all.candidates)
+})
 
-    if (!missing(site) & (!missing(chrom) | !missing(position)))
+
+# for summary.SCAN2, the up/downstream size is smaller to match the filtered gatk table
+setMethod("plot.region", "summary.SCAN2", function(object, site=NA, chrom=NA, position=NA,
+    upstream=1e4, downstream=1e4, gp.extend=1e5, n.gp.points=100, recompute=TRUE, show.all.candidates=FALSE)
+{
+    check.slots(object, c('gatk'))
+    if (recompute)
+        check.slots(object, 'ab.fits')
+    gatk <- qs::qdeserialize(object@gatk)
+    ab.fits <- ab.fits(object)
+    helper.plot.region(gatk=gatk, ab.fits=ab.fits, site=site, chrom=chrom, position=position,
+        upstream=upstream, downstream=downstream, gp.extend=gp.extend, n.gp.points=n.gp.points,
+        recompute=recompute, show.all.candidates=show.all.candidates)
+})
+
+
+helper.plot.region <- function(gatk, ab.fits, site=NA, chrom=NA, position=NA,
+    upstream=5e4, downstream=5e4, gp.extend=1e5, n.gp.points=100, recompute=TRUE, show.all.candidates=FALSE)
+{
+
+    if (!is.na(site) & (!is.na(chrom) | !is.na(position)))
         stop("either site or (chrom,pos) must be specified, but not both")
-    if ((!missing(chrom) & missing(position)) | (missing(chrom) & !missing(position)))
+    if ((!is.na(chrom) & is.na(position)) | (is.na(chrom) & !is.na(position)))
         stop("both chrom and pos must be specified")
 
     if (!missing(site)) {
-        chrom <- object@gatk[site,]$chr
-        position <- object@gatk[site,]$pos
+        chrom <- gatk[site,]$chr
+        position <- gatk[site,]$pos
         cat('using site', site, '\n')
-        print(object@gatk[site,])
+        print(gatk[site,])
     }
 
     # Sites at which AB was estimated in the genotyper.
@@ -207,7 +242,7 @@ setMethod("plot.region", "SCAN2", function(object, site=NA, chrom=NA, position=N
     # Don't keep sites with no reads in this sample, unless it's a training
     # site. The majority of these 0 read, non-germline sites are here
     # because they had reads in a different sample.
-    d <- object@gatk[chr == chrom &
+    d <- gatk[chr == chrom &
         pos >= position - upstream & pos <= position + upstream &
         (training.site | somatic.candidate) & bulk.gt != '1/1']
 
@@ -222,8 +257,8 @@ setMethod("plot.region", "SCAN2", function(object, site=NA, chrom=NA, position=N
                     seq(position+1, position + downstream, length.out=n.gp.points/2),
                     d$position)
         est.at <- sort(unique(est.at))
-        fit.chr <- object@ab.fits[chrom,,drop=FALSE]
-        newdt <- object@gatk[training.site == TRUE & chr == chrom]
+        fit.chr <- ab.fits[chrom,,drop=FALSE]
+        newdt <- gatk[training.site == TRUE & chr == chrom]
         # infer.gp requires hsnps to have hap1 and hap2 columns
         newdt[, c('hap1', 'hap2') := list(phased.hap1, phased.hap2)]
         gp <- infer.gp1(ssnvs=data.frame(chr=chrom, pos=est.at),
@@ -237,9 +272,14 @@ setMethod("plot.region", "SCAN2", function(object, site=NA, chrom=NA, position=N
         gp$gp.mu <- match.ab(af=gp$af, gp.mu=gp$gp.mu)
     }
 
+    title <- ifelse(gatk[site,]$somatic.candidate == TRUE, 'Somatic candidate',
+        ifelse(gatk[site,]$training.site == TRUE, paste0('Training site (', ifelse(gatk[site,]$muttype == 'snv', '', 'not '), 'used in AB model)'),
+            'Unused'))
+    title <- paste0(title, ': ', gatk[site,]$muttype, ' ', site)
     plot.gp.confidence(df=gp, add=FALSE,
         xlab=paste('Chrom', d$chr[1], 'position'),
-        ylab='Allele fraction')
+        ylab='Allele fraction',
+        main=title)
     points(d[training.site==TRUE]$pos,
         d[training.site==TRUE, phased.hap1/(phased.hap1+phased.hap2)],
         pch=20, cex=1, col=1, ylim=c(-0.2,1))
@@ -255,8 +295,14 @@ setMethod("plot.region", "SCAN2", function(object, site=NA, chrom=NA, position=N
     # If a site was given, emphasize it
     if (!missing(site)) {
         abline(v=position, lty='dotted')
-        abline(h=d[pos==position]$af, lty='dotted')
-        points(position, d[pos == position]$af, pch=4, cex=1.5, lwd=2, col=3)
+        # sites that are neither training nor candidate somatics are not in `d`
+        if (nrow(d[pos == position]) > 0) {
+            # AF doesn't exist if this is a 0 depth site
+            if (d[pos == position]$dp > 0) {
+                abline(h=d[pos==position]$af, lty='dotted')
+                points(position, d[pos == position]$af, pch=4, cex=1.5, lwd=2, col=3)
+            }
+        }
     }
 
     if (show.all.candidates) {
@@ -268,7 +314,7 @@ setMethod("plot.region", "SCAN2", function(object, site=NA, chrom=NA, position=N
         legend('topright', legend=c('Training hSNP', 'Target site'),
             pch=c(20,4), col=c(1,3), pt.cex=c(1,1.5))
     }
-})
+}
 
 # Add 95% confidence bands for AB model to plot.
 # NOTE: the 95% probability interval is in the NORMAL space, not the
@@ -307,21 +353,34 @@ plot.gp.confidence <- function(pos, gp.mu, gp.sd, df, sd.mult=2,
 }
 
 
-plot.abmodel.covariance <- function(object, bin.breaks=c(1, 10^seq(1,5,length.out=50)), ...) {
+###############################################################################
+# Plot covariance (of allelic imbalance) as a function of the distance between
+# two sites.
+###############################################################################
+
+setGeneric("plot.abmodel.covariance", function(object) standardGeneric("plot.abmodel.covariance"))
+setMethod("plot.abmodel.covariance", "SCAN2", function(object) {
+    # Use finer binning than the standard call
+    neighbor.approx <- approx.abmodel.covariance(object, bin.breaks=c(1, 10^seq(1,5,length.out=50)))
+    helper.plot.abmodel.covariance(object, neighbor.approx)
+})
+
+setMethod("plot.abmodel.covariance", "summary.SCAN2", function(object) {
+    helper.plot.abmodel.covariance(object, object@training.data$neighbor.cov.approx.full)
+})
+
+helper.plot.abmodel.covariance <- function(object, approx) {
     plot.mle.fit <- function(object, ...) {
-        ps <- colMeans(object@ab.fits)
+        ps <- colMeans(ab.fits(object))
         a=ps['a']; b=ps['b']; c=ps['c']; d=ps['d']
         curve(K.func(x, y=0, a=a, b=b, c=c, d=d)/(exp(a)+exp(c)), ...)
     }
 
-    # Use finer binning than the standard call
-    neighbor.approx <- approx.abmodel.covariance(object, bin.breaks=bin.breaks)
-
     # [-1] - use right-hand side of interval for plotting
-    plot(neighbor.approx[,.(max.d, corrected.cor)],
+    plot(approx[,.(max.d, corrected.cor)],
         log='x', type='b', pch=16, ylim=0:1,
-        xlab='Distance between hSNPs (log10)', ylab='Correlation between hSNP VAFs', ...)
-    lines(neighbor.approx[,.(max.d, observed.cor)],
+        xlab='Distance between hSNPs (log10)', ylab='Correlation between hSNP VAFs')
+    lines(approx[,.(max.d, observed.cor)],
         type='b', pch=1, lty='dotted')
     plot.mle.fit(object, add=TRUE, col=2, lwd=2)
     legend('topright', pch=c(16,1,NA), lwd=c(1,1,2), col=c(1,1,2), lty=c('solid','dotted','solid'),
@@ -330,12 +389,32 @@ plot.abmodel.covariance <- function(object, bin.breaks=c(1, 10^seq(1,5,length.ou
 }
 
 
-plot.depth.profile <- function(object, keep.zero=FALSE, quantile=0.99, ...) {
+
+###############################################################################
+# Plot a 2D histogram of single cell sequencing depth vs. bulk sequencing depth
+###############################################################################
+
+setGeneric("plot.depth.profile", function(object, maxdp, keep.zero=FALSE, quantile=0.99)
+    standardGeneric("plot.depth.profile"))
+
+setMethod("plot.depth.profile", "SCAN2", function(object, maxdp, keep.zero=FALSE, quantile=0.99) {
+    d <- object@depth.profile$dptab
+    if (missing(maxdp))
+        maxdp <- object@depth.profile$clamp.dp
+    helper.plot.depth.profile(d=d, maxdp=maxdp, keep.zero=keep.zero, quantile=quantile)
+})
+
+setMethod("plot.depth.profile", "summary.SCAN2", function(object, maxdp, keep.zero=FALSE, quantile=0.99) {
+    d <- object@depth.profile$dptab
+    if (missing(maxdp))
+        maxdp <- object@depth.profile$clamp.dp
+    helper.plot.depth.profile(d=d, maxdp=maxdp, keep.zero=keep.zero, quantile=quantile)
+})
+
+helper.plot.depth.profile <- function(d, maxdp, keep.zero=FALSE, quantile=0.99) {
     require(viridisLite)
     # row and column 1 correspond to 0 depth. these usually completely
     # drown out the rest of the depth signal.
-    d <- object@depth.profile$dptab
-    maxdp <- object@depth.profile$clamp.dp
     x=0:maxdp
     y=0:maxdp
     if (!keep.zero) {
@@ -344,7 +423,7 @@ plot.depth.profile <- function(object, keep.zero=FALSE, quantile=0.99, ...) {
         y <- y[-1]
     }
 
-    # Cut the plot down to 95% (=quantile option) of the genome in each direction
+    # Cut the plot down to XX% (=quantile option) of the genome in each direction
     xmax <- which(cumsum(rowSums(d))/sum(d) >= quantile)[1]
     if (length(xmax) == 0)  # if not found, take the whole thing
         xmax <- maxdp
@@ -359,9 +438,30 @@ plot.depth.profile <- function(object, keep.zero=FALSE, quantile=0.99, ...) {
 }
 
 
+
+###############################################################################
+# Plot measured sensitivity at hSNPs vs predicted sensitivity from the
+# spatial sensitivity model.
+###############################################################################
+
+setGeneric('plot.sensitivity', function(object, min.tiles=150) standardGeneric('plot.sensitivity'))
+setMethod('plot.sensitivity', 'SCAN2', function(object, min.tiles=150) {
+    helper.plot.sensitivity(
+        maj=assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='maj'),
+        min=assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='min'),
+        min.tiles=min.tiles)
+})
+
+setMethod('plot.sensitivity', 'summary.SCAN2', function(object, min.tiles=150) {
+    helper.plot.sensitivity(
+        maj=object@spatial.sensitivity$model.assessment[[paste0(mt, '.maj')]],
+        min=object@spatial.sensitivity$model.assessment[[paste0(mt, '.min')]],
+        min.tiles=min.tiles)
+})
+
 # tilewidth=1kb by default. the het germline SNP rate in humans is about 1/1.5kb. so
 # to get a min. genomic region containing roughly ~100 hSNPs, need 150kb = 150 tiles.
-plot.sensitivity <- function(object, min.tiles=150) {
+helper.plot.sensitivity <- function(maj, min, min.tiles=150) {
     layout(t(1:2))
     for (mt in c('snv', 'indel')) {
         maj <- assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='maj')
@@ -376,37 +476,165 @@ plot.sensitivity <- function(object, min.tiles=150) {
 }
 
 
-plot.sensitivity.covs <- function(object, muttype=c('snv', 'indel'),
-    covs=c('gp.mu', 'gp.sd', 'mean.sc.dp', paste0(muttype, '.', 'n.training.neighborhood'),
-           paste0('bases.gt.', muttype, '.sc.min.dp')), min.tiles=150) {
+
+###############################################################################
+# Plot covariates of the sensitivity model vs. measured (at hSNPs) and
+# predicted (by the sensitivity model) sensitivities.
+#
+# Because these plots show marginal comparisons of one covariate vs. the
+# predicted and sensitivity considering all covariates, it is not surprising
+# that the predicted and measured sensitivities do not agree. When binning
+# the genome by only one covariate, important information in other covariates
+# may not be available.
+###############################################################################
+
+setGeneric('plot.sensitivity.covs', function(object, covs, muttype=c('snv', 'indel'), min.tiles=150)
+    standardGeneric('plot.sensitivity.covs'))
+setMethod('plot.sensitivity.covs', 'SCAN2',
+    function(object, covs, muttype=c('snv', 'indel'), min.tiles=150) {
+    tab <- rbindlist(lapply(covs, assess.covariate, object=object, min.tiles=min.tiles))
+    if (missing(covs))
+        covs <- unique(tab$cov.name)
+    else
+        tab <- tab[cov.name %in% covs]
+    helper.plot.sensitivity.covs(tab=tab, muttype=muttype)
+})
+
+setMethod('plot.sensitivity.covs', 'summary.SCAN2',
+    function(object, covs, muttype=c('snv', 'indel'), min.tiles=150) {
+    tab <- object@spatial.sensitivity$covariate.assessment[n.tiles >= min.tiles]
+    if (missing(covs))
+        covs <- unique(tab$cov.name)
+    else
+        tab <- tab[cov.name %in% covs]
+    helper.plot.sensitivity.covs(tab=tab, muttype=muttype)
+})
+
+helper.plot.sensitivity.covs <- function(tab, muttype=c('snv', 'indel'), covs=unique(tab$cov.name)) {
     muttype <- match.arg(muttype)
 
     layout(matrix(1:(2*length(covs)), nrow=2))
     par(mar=c(5,4,1,1))
-    for (cov in covs) {
-        xform <- identity
-        if (cov == 'gp.mu' | cov == 'gp.sd')  # abs() does nothing for gp.sd, which is >0.
-            xform <- function(x) round(abs(x),2)
-        if (cov == 'mean.sc.dp')
-            xform <- function(x) round(x,0)   # integerize, but nearest
+    for (this.cov in covs) {
+        this.tab <- tab[cov.name == this.cov]
 
-        pred.maj <- paste0('pred.', muttype, '.maj')
-        pred.min <- paste0('pred.', muttype, '.min')
-        # is.na(mean.bulk.dp) is essentially an alias for tiles in unassembled genome
-        # regions. there are ~71 tiles containing hSNPs with is.na(mean.bulk.dp) vs.
-        # 195,046 tiles with no hSNPs in the neighborhood of +/- 10kb.
-        tab <- object@spatial.sensitivity$data[!is.na(mean.bulk.dp),
-            .(sens.maj=mean(get(pred.maj), na.rm=TRUE),
-              sens.min=mean(get(pred.min), na.rm=TRUE),
-              n.tiles=nrow(.SD)),
-            by=.(cov=xform(get(cov)))][order(cov)][n.tiles >= min.tiles]
-        plot(tab[,.(cov, sens.maj)], pch=20, ylim=0:1,
-            xlab=cov, ylab='Predicted sensitivity')
-        lines(tab[,.(cov, sens.maj)])
-        points(tab[,.(cov, sens.min)], pch=20, col=2)
-        lines(tab[,.(cov, sens.min)], col=2)
+        # names of columns in tab corresponding to predicted and measured sensitivity
+        pred.maj <- paste0('pred.', muttype, '.sens.maj')
+        pred.min <- paste0('pred.', muttype, '.sens.min')
+        measured.maj <- paste0(muttype, '.sens.maj')
+        measured.min <- paste0(muttype, '.sens.min')
+
+        # Plot 1: how do measured and predicted sensitivity change w.r.t. covariate?
+        plot(this.tab[,.(cov, get(measured.maj))], type='p', pch=20, ylim=0:1, xlab=this.cov, ylab='Sensitivity')
+        lines(this.tab[,.(cov, get(pred.maj))])
+        points(this.tab[,.(cov, get(measured.min))], pch=20, col=2)
+        lines(this.tab[,.(cov, get(pred.min))], col=2)
         legend('bottomright', legend=c('Major allele', 'Minor allele'), col=1:2, pch=20, lwd=1)
-        plot(tab[,.(cov, 100*n.tiles/sum(n.tiles))], pch=20,
-            xlab=cov, ylab='Percent of genome')
+        legend('topleft', legend=c('Measured', 'Predicted'), pch=c(20,NA), lwd=c(NA,1))
+
+        # Plot 2: how much of the genome is covered by each covariate value?
+        plot(this.tab[,.(cov, 100*n.tiles/sum(n.tiles))], pch=20,
+            xlab=this.cov, ylab='Percent of genome')
     }
+}
+
+
+
+
+###############################################################################
+# Give the user a sense of what would happen if the --target-fdr parameter
+# (which controls SCAN2's sensitivity/specificity trade-off) were changed.
+#
+# The first plot shows how many more mutations would be called. The user
+# should understand that more mutations likely means more false positives.
+# This plot is non-decreasing.
+#
+# The second plot helps to understand whether target.fdr (which does not
+# formally control FDR) is a (very) roughly reasonable estimate of FDR.
+# If target.fdr is close to the real FDR, then the number of true mutations
+# called is
+#       true mutations = (1 - target.fdr)*(#mutation calls). 
+# Further, if target.fdr is a reasonable FDR estimate, then increasing
+# target.fdr should increase the two following sensitivities at the same rate:
+#       1. increase in the number of somatic mutations recovered (i.e., somatic
+#          sensitivity) and
+#       2. increase in the number of germline het variants called using
+#          the leave-one-out approximation (germline sensitivity)
+# Thus, if plot 2 is roughly flat, then target.fdr and true FDR are likely
+# linearly related.  Once plot 2 is no longer flat (often occurs at the right
+# side of the plot), target.fdr is no longer a reasonable FDR estimator.
+###############################################################################
+
+setGeneric('plot.target.fdr.effect', function(object, muttype=c('snv', 'indel'))
+    standardGeneric('plot.target.fdr.effect'))
+setMethod('plot.target.fdr.effect', 'SCAN2',
+    function(object, muttype=c('snv', 'indel'))
+{
+    this.muttype <- match.arg(muttype)
+    tab <- summarize.call.mutations.and.mutburden(object)$metrics[muttype == this.muttype]
+    helper.plot.target.fdr.effect(tab)
+})
+
+setMethod('plot.target.fdr.effect', 'summary.SCAN2',
+    function(object, muttype=c('snv', 'indel'))
+{
+    this.muttype <- match.arg(muttype)
+    tab <- object@call.mutations.and.mutburden$metrics[muttype == this.muttype]
+    helper.plot.target.fdr.effect(tab)
+})
+
+helper.plot.target.fdr.effect <- function(tab) {
+    fdr.used <- tab[selected.target.fdr == TRUE]$target.fdr
+    layout(1:2)
+    plot(tab[target.fdr < 1,.(target.fdr, n.pass)],
+        type='b', pch=20, log='x',
+        xlab='--target-fdr parameter (log-scale)',
+        ylab='SCAN2 VAF-based calls',
+        main=paste('Number of VAF-based calls'))
+    abline(v=fdr.used, lty='dashed')
+    plot(tab[target.fdr < 1,.(target.fdr, (1-target.fdr)*n.pass / (n.resampled.training.pass/total.resampled))],
+        type='b', pch=20, log='x',
+        xlab='--target-fdr parameter (log-scale)',
+        ylab='(1-FDR) * (Somatic mutations) / naive sensitivity',
+        main='Ideal FDR interpretation')
+    abline(v=fdr.used, lty='dashed')
+}
+
+
+###############################################################################
+# Show how SCAN2's total mutation burden extrapolation would change if the
+# --target-fdr parameter were changed.
+#
+# TODO: would be nice to make a similar plot but changing min.sc.dp.
+###############################################################################
+
+setGeneric('plot.mutburden', function(object, muttype=c('snv', 'indel'))
+    standardGeneric('plot.mutburden'))
+setMethod('plot.mutburden', 'SCAN2',
+    function(object, muttype=c('snv', 'indel'))
+{
+    this.muttype <- match.arg(muttype)
+    tab <- summarize.call.mutations.and.mutburden(object)[muttype == this.muttype]
+    helper.plot.mutburden(tab)
+})
+
+setMethod('plot.mutburden', 'summary.SCAN2',
+    function(object, muttype=c('snv', 'indel'))
+{
+    this.muttype <- match.arg(muttype)
+    tab <- object@call.mutations.and.mutburden$metrics[muttype == this.muttype]
+    helper.plot.mutburden(tab)
+})
+
+# this.muttype - don't name this "muttype" because that matches a column name in
+# the table. haven't figured out how to make data.table differentiate between a
+# column name and variable in the calling env.
+helper.plot.mutburden <- function(tab) {
+    fdr.used <- tab[selected.target.fdr == TRUE]$target.fdr
+    plot(tab[target.fdr < 1,.(target.fdr, burden)],
+        type='b', pch=20, log='x',
+        xlab='--target-fdr parameter (log-scale)',
+        ylab='Mutation burden',
+        main=paste('SCAN2 total extrapolated burden'))
+    abline(v=fdr.used, lty='dashed')
 }
