@@ -299,7 +299,7 @@ estimate.somatic.burden <- function(fc, min.s=1, max.s=5000, n.subpops=10, displ
 
 # {germ,som}.df need only have columns named dp and af
 # estimate the population component of FDR
-fcontrol <- function(germ.df, som.df, bins=20, rough.interval=0.99, eps=0.1) {
+fcontrol <- function(germ.df, som.df, bins=20, rough.interval=0.99, eps=0.1, quiet=FALSE) {
     germ.afs <- germ.df$af[!is.na(germ.df$af) & germ.df$af > 0]
     som.afs <- som.df$af[!is.na(som.df$af)]
     g <- bin.afs(germ.afs, bins=bins)  # counts, not probabilities
@@ -321,9 +321,11 @@ fcontrol <- function(germ.df, som.df, bins=20, rough.interval=0.99, eps=0.1) {
         min.s=1, max.s=sum(s), n.subpops=min(sum(s), 100),
         rough.interval=rough.interval)
 
-    cat(sprintf("fcontrol: dp=%d, max.s=%d (%d), n.subpops=%d, min=%d, max=%d\n",
-        germ.df$dp[1], nrow(som.df), sum(s), min(nrow(som.df),100),
-        as.integer(approx.ns[1]), as.integer(approx.ns[2])))
+    if (!quiet) {
+        cat(sprintf("fcontrol: dp=%d, max.s=%d (%d), n.subpops=%d, min=%d, max=%d\n",
+            germ.df$dp[1], nrow(som.df), sum(s), min(nrow(som.df),100),
+            as.integer(approx.ns[1]), as.integer(approx.ns[2])))
+    }
     pops <- lapply(approx.ns, function(n) {
         #        nt <- pmax(n*(g/sum(g))*1*(s > 0), 0.1)
         nt <- pmax(n*(g/sum(g)), eps)
@@ -364,22 +366,22 @@ compute.fdr.prior.data.for.candidates <- function(candidates, hsnps, bins=20, ra
         max.dp <- 0
 
     progressr::with_progress({
-        p <- progressr::progressor(along=0:(max.dp+1))
+        if (!quiet) p <- progressr::progressor(along=0:(max.dp+1))
         # These simulations really aren't slow enough to necessitate parallelizing
         #fcs <- future.apply::future_lapply(0:max.dp, function(thisdp) {
         fcs <- lapply(0:max.dp, function(thisdp) {
             ret <- fcontrol(germ.df=hsnps[dp == thisdp],
                     som.df=candidates[dp == thisdp],
-                    bins=bins, eps=eps)
-            p()
+                    bins=bins, eps=eps, quiet=quiet)
+            if (!quiet) p()
             ret
         })
         #}, future.seed=0)
         fc.max <- fcontrol(germ.df=hsnps[dp > max.dp],
                     som.df=candidates[dp > max.dp],
-                    bins=bins, eps=eps)
-        p()
-    })
+                    bins=bins, eps=eps, quiet=quiet)
+        if (!quiet) p()
+    }, enable=TRUE)
     fcs <- c(fcs, list(fc.max))
 
     # randomness done (used only in fcontrol())
