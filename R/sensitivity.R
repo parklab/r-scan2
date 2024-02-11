@@ -224,6 +224,47 @@ assess.predicted.somatic.sensitivity <- function(object, muttype=c('snv', 'indel
 }
 
 
+# Return a table for the named covariate with:
+#   - binned covariate value
+#   - sensitivity for all combinations of:
+#       * muttype=snv, indel 
+#       * allele=maj, min
+#       * sensitivity=measured (at hSNPs), predicted (by model)
+#   - number of tiles in genome with this binned cov value
+assess.covariate <- function(object, cov, cov.bin.digits=2) {
+    xform <- identity
+    cov.name <- cov
+    if (cov == 'abs(gp.mu)' | cov == 'gp.sd') {
+        # abs(gp.mu) must be mapped to gp.mu because the column in the table is named gp.mu
+        # the "abs(gp.mu)" name is kept as the name of the covariate (in cov.name) because
+        # that's the coef name in the model.
+        if (cov == 'abs(gp.mu)')
+            cov <- 'gp.mu'
+
+        # abs() does nothing for gp.sd, which is >0. Just want round(2)
+        xform <- function(x) round(abs(x),cov.bin.digits)
+    }
+    if (cov == 'mean.sc.dp')
+        xform <- function(x) round(x,0)   # integerize, but nearest
+
+    # is.na(mean.bulk.dp) is essentially an alias for tiles in unassembled genome
+    # regions. there are ~71 tiles containing hSNPs with is.na(mean.bulk.dp) vs.
+    # 195,046 tiles with no hSNPs in the neighborhood of +/- 10kb.
+    object@spatial.sensitivity$data[!is.na(mean.bulk.dp),
+        .(cov.name=..cov.name,
+          snv.sens.maj=sum(snv.n.training.passed.maj, na.rm=TRUE) / sum(snv.n.training.maj, na.rm=TRUE),
+          snv.sens.min=sum(snv.n.training.passed.min, na.rm=TRUE) / sum(snv.n.training.min, na.rm=TRUE),
+          pred.snv.sens.maj=mean(pred.snv.maj, na.rm=TRUE),
+          pred.snv.sens.min=mean(pred.snv.min, na.rm=TRUE),
+          indel.sens.maj=sum(indel.n.training.passed.maj, na.rm=TRUE) / sum(indel.n.training.maj, na.rm=TRUE),
+          indel.sens.min=sum(indel.n.training.passed.min, na.rm=TRUE) / sum(indel.n.training.min, na.rm=TRUE),
+          pred.indel.sens.maj=mean(pred.indel.maj, na.rm=TRUE),
+          pred.indel.sens.min=mean(pred.indel.min, na.rm=TRUE),
+          n.tiles=nrow(.SD)),
+        by=.(cov=xform(get(cov)))][order(cov)]
+}
+
+
 # predicted sensitivity is rounded to `stratify.sensitivity.digits` decimals. 2 is
 # good in practice. increasing the digits will use a closer approximation of the
 # model's sensitivity, which could increase accuracy in some cases. however, more
@@ -551,10 +592,11 @@ integrate.spatial.sensitivity.covariates <- function(object, abmodel.covs, depth
     colnames(calls) <- paste0('indel.', colnames(calls))
     ab.data <- cbind(ab.data, calls)
 
+    # sort=FALSE: match the original tile ordering
     cat("Merging with AB model covariates..\n")
-    ret <- merge(ab.data, abmodel.covs, by=c('chr', 'start', 'end'))
+    ret <- merge(ab.data, abmodel.covs, sort=FALSE, by=c('chr', 'start', 'end'))
     cat("Merging with depth covariates..\n")
-    ret <- merge(ret, depth.covs, by=c('chr', 'start', 'end'))
+    ret <- merge(ret, depth.covs, sort=FALSE, by=c('chr', 'start', 'end'))
 
     cat("Computing sensitivity models\n")
     # Split data into two halves for later hold-out training
@@ -574,7 +616,9 @@ integrate.spatial.sensitivity.covariates <- function(object, abmodel.covs, depth
     names(models) <- c('snv.maj', 'snv.min', 'indel.maj', 'indel.min')
     # As noted above, models are very large. Just store the coefficients for
     # convenience. If the full model is desired, rerun model.somatic.sensitivity.
-    models <- lapply(models, coefs)
+    # When applied to summary(m), the coef() function returns a table of coef values
+    # as well as standard error and significance values.
+    models <- lapply(models, function(m) coef(summary(m)))
 
     burdens <- setNames(lapply(c('snv', 'indel'), function(mt)
         estimate.burden.by.spatial.sensitivity(data=ret, muttype=mt)),
