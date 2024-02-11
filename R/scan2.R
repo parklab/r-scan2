@@ -45,62 +45,6 @@ check.chunked <- function(object, message) {
         warning(message)
 }
 
-genome.string.to.seqinfo.object <- function(genome=c('hs37d5', 'hg38', 'mm10')) {
-    genome <- match.arg(genome)
-    if (genome == 'hs37d5') {
-        return(GenomeInfoDb::Seqinfo(genome='GRCh37.p13'))
-    } else if (genome == 'hg38') {
-        return(GenomeInfoDb::Seqinfo(genome='hg38'))
-    } else if (genome == 'mm10') {
-        return(GenomeInfoDb::Seqinfo(genome='mm10'))
-    } else {
-        # shouldn't be possible
-        stop("unsupported genome string")
-    }
-}
-
-genome.string.to.bsgenome.object <- function(genome=c('hs37d5', 'hg38', 'mm10')) {
-    genome <- match.arg(genome)
-
-    if (genome == 'hs37d5') {
-        require(BSgenome.Hsapiens.1000genomes.hs37d5)
-        genome <- BSgenome.Hsapiens.1000genomes.hs37d5
-    } else if (genome == 'hg38') {
-        require(BSgenome.Hsapiens.UCSC.hg38)
-        genome <- BSgenome.Hsapiens.UCSC.hg38
-    } else if (genome == 'mm10') {
-        require(BSgenome.Mmusculus.UCSC.mm10)
-        genome <- BSgenome.Mmusculus.UCSC.mm10
-    } else {
-        # shouldn't be possible
-        stop('unsupported genome string')
-    }
-    genome
-}
-
-genome.string.to.tiling <- function(genome=c('hs37d5', 'hg38', 'mm10'), tilewidth=10e6, group=c('auto', 'sex', 'circular', 'all')) {
-    genome <- match.arg(genome)
-    group <- match.arg(group)
-
-    if (genome == 'hs37d5') {
-        species <- 'Homo_sapiens'
-    } else if (genome == 'hg38') {
-        species <- 'Homo_sapiens'
-    } else if (genome == 'mm10') {
-        species <- 'Mus_musculus'
-    } else {
-        # shouldn't be possible
-        stop("unsupported genoome string")
-    }
-
-    sqi <- genome.string.to.seqinfo.object(genome)
-    # seqlevelsStyle()[1] - 'hs37d5' returns both NCBI and Ensembl as styles, pick the first one
-    chroms.to.tile <-
-        GenomeInfoDb::extractSeqlevelsByGroup(species=species, style=seqlevelsStyle(sqi)[1], group=group)
-
-    grs <- GenomicRanges::tileGenome(seqlengths=sqi[chroms.to.tile], tilewidth=tilewidth, cut.last.tile.in.chrom=TRUE)
-    grs
-}
 
 make.scan <- function(single.cell, bulk, genome=c('hs37d5', 'hg38', 'mm10'), region=NULL) {
     genome <- match.arg(genome)
@@ -668,7 +612,7 @@ setMethod("compute.static.filters", "SCAN2", function(object, mode=c('new', 'leg
         sfp <- object@static.filter.params[[mt]]
         object@gatk[muttype == mt, c('cigar.id.test', 'cigar.hs.test', 'lowmq.test',
                 'dp.test', 'abc.test', 'min.sc.alt.test',
-                'max.bulk.alt.test', 'max.bulk.af.test',
+                'max.bulk.alt.test', 'max.bulk.af.test', 'max.bulk.binom.prob.test',
                 'dbsnp.test', 'csf.test') :=
                     list(id.score >= object@excess.cigar.scores[[mt]]$id.score.q,
                         hs.score >= object@excess.cigar.scores[[mt]]$hs.score.q,
@@ -677,7 +621,8 @@ setMethod("compute.static.filters", "SCAN2", function(object, mode=c('new', 'leg
                         abc.pv > 0.05,
                         scalt >= sfp$min.sc.alt,
                         balt <= sfp$max.bulk.alt,
-                        bulk.af <= sfp$max.bulk.af,
+                        is.na(sfp$max.bulk.af) | bulk.af <= sfp$max.bulk.af,
+                        is.na(sfp$max.bulk.binom.prob) | bulk.binom.prob <= sfp$max.bulk.binom.prob,
                         !sfp$exclude.dbsnp | dbsnp == '.',
                         muttype == 'snv' | unique.donors <= 1 | max.out <= 2)]
 
@@ -689,7 +634,7 @@ setMethod("compute.static.filters", "SCAN2", function(object, mode=c('new', 'leg
 
         object@gatk[muttype == mt, static.filter :=
             cigar.id.test & cigar.hs.test & lowmq.test & dp.test &
-            abc.test & min.sc.alt.test & max.bulk.alt.test & max.bulk.af.test &
+            abc.test & min.sc.alt.test & max.bulk.alt.test & max.bulk.af.test & max.bulk.binom.prob.test &
             dbsnp.test & csf.test]
     }
     object
