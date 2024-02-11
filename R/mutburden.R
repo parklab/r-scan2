@@ -33,6 +33,39 @@ get.gbp.by.genome <- function(object) {
 }
 
 
+# SCAN2 somatic calling sensitivity changes with sequencing depth. This
+# mutation burden calculation takes a very rough and simple approach to
+# limit the extent of depth-driven differences in sensitivity. To do this,
+# we simply exclude the 25% of the genome with the least depth (i.e.,
+# first quartile Q1), which has low sensitivity, and the 25% of the genome
+# with the highest depth (i.e., fourth quartile, Q4), which has high sens.
+# After excluding Q1 and Q3, we are left with the "middle 50%". Within that
+# restricted region, sensitivity varies less than it would if Q1 and Q4 were
+# included. As such, the average somatic sensitivity in the middle 50% is
+# more stable and likely to produce a more robust total extrapolation.
+#
+# This implementation contains a notably counterintuitive detail:
+# 
+# The minimum depth requirement parameters (like --min-sc-dp, --min-bulk-dp)
+# are not used when determining the "middle 50%" of the depth distribution.
+# This depth distribution is always calculated using all resampled training
+# sites of the appropriate mutation type (snv or indel).
+#
+# Once the definition of the "middle 50%" is determined, then the
+# minimum depth requirement parameters are used when calculating somatic and
+# germline variant sensitivity.  This has the odd effect that if the min
+# depth parameters are increased too much (say, beyond Q3 of the depth distn
+# of resampled germline variants), then the sensitivity drops to 0 because
+# the min depth params exclude all sites in the middle 50%.
+#
+# The most confusing part of all of this is that the number of basepairs in
+# the middle 50% are called "callable.bp"; however, they are not actually
+# "callable" if the min depth reqs exclude them.
+#
+# Despite this, the calculation remains correct because het germline variants
+# and somatic mutations are equally affected by the min depth reqs. So if
+# parts of the middle 50% are excluded by min depth reqs, this will be
+# reflected in the sensitivity estimates.
 setGeneric("compute.mutburden", function(object, gbp.per.genome=get.gbp.by.genome(object), quiet=FALSE)
         standardGeneric("compute.mutburden"))
 setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.by.genome(object), quiet=FALSE) {
