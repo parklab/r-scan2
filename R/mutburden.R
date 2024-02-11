@@ -66,11 +66,20 @@ get.gbp.by.genome <- function(object) {
 # and somatic mutations are equally affected by the min depth reqs. So if
 # parts of the middle 50% are excluded by min depth reqs, this will be
 # reflected in the sensitivity estimates.
+#
+# WHEN ANALYZING SEX CHROMOSOMES: sex chromosomes are ignored as completely
+# as they can be when computing mutation burden.  Mutation burdens are
+# normally computed _without any analysis of sex chromosomes_.
+# However, when sex chromosomes (particularly X) are included in @gatk,
+# the sex chrom germline and somatic calls are ignored here.  This only
+# preserves normal behavior if `dptab` does not include depth information
+# from sex chromosomes (which is the current behavior).
 setGeneric("compute.mutburden", function(object, gbp.per.genome=get.gbp.by.genome(object), quiet=FALSE)
         standardGeneric("compute.mutburden"))
 setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.by.genome(object), quiet=FALSE) {
     check.slots(object, c('call.mutations', 'depth.profile'))
 
+    autosome.names <- genome.string.to.chroms(object@genome.string, group='auto')
     muttypes <- c('snv', 'indel')
     object@mutburden <- setNames(lapply(muttypes, function(mt) {
         # [2] is the maximum burden; the minimum burden [1] is almost always ~0
@@ -78,7 +87,7 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
         sfp <- object@static.filter.params[[mt]]
     
         # germline sites
-        g <- object@gatk[resampled.training.site == TRUE & muttype == mt]
+        g <- object@gatk[chr %in% autosome.names & resampled.training.site == TRUE & muttype == mt]
 
         # (single cell  x  bulk) depth table
         dptab <- object@depth.profile$dptab
@@ -96,7 +105,7 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
             )[c(1,1,1),]  # repeat row 1 3 times
         } else {
             # somatic sites
-            s <- object@gatk[pass == TRUE & muttype == mt]
+            s <- object@gatk[chr %in% autosome.names & pass == TRUE & muttype == mt]
 
             # Break data into 4 quantiles based on depth, use the middle 2 (i.e.,
             # middle 50%) to reduce noise caused by very low and very high depth.
@@ -147,7 +156,11 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
         ret$somatic.sens <- ret$ncalls / ret$burden
         ret$pre.genotyping.burden <- pre.geno.burden
     
-        ret$unsupported.filters <- sfp$max.bulk.alt > 0 | sfp$max.bulk.af > 0
+        ret$unsupported.filters <- sfp$max.bulk.alt > 0 |
+            # these two filters support a value of NA to prevent filtering
+            (!is.na(sfp$max.bulk.af) & sfp$max.bulk.af > 0) |
+            (!is.na(sfp$max.bulk.binom.prob) & sfp$max.bulk.binom.prob > 0)
+
         if (any(ret$unsupported.filters)) {
             warning('mutation burdens must be extrapolated without clonal mutations (i.e., max.bulk.alt=0 and max.bulk.af=0)! burdens will be estimated, but they are invalid')
         }
