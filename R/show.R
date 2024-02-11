@@ -78,14 +78,14 @@ setMethod("show.abmodel.training.sites", "SCAN2", function(object) {
 setGeneric("show.abmodel.params", function(object) standardGeneric("show.abmodel.params"))
 setMethod("show.abmodel.params", "SCAN2", function(object) {
     cat("#   AB model parameters:")
-    if (is.null(object@ab.fits)) {
+    if (is.null(ab.fits(object))) {
         cat(" (no data)\n")
     } else {
         cat(sprintf('\n#       average (over chromosomes): a=%0.3f, b=%0.3f, c=%0.3f, d=%0.3f\n',
-            mean(object@ab.fits$a),
-            mean(object@ab.fits$b),
-            mean(object@ab.fits$c),
-            mean(object@ab.fits$d)))
+            mean(ab.fits(object)$a),
+            mean(ab.fits(object)$b),
+            mean(ab.fits(object)$c),
+            mean(ab.fits(object)$d)))
     }
 })
 
