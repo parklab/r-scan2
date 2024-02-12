@@ -290,12 +290,12 @@ annotate.gatk.panel <- function(gatk, panel.path, region=NULL, quiet=FALSE) {
 # a mutation locus, meaning the site may be a candidate in at least one single
 # cell.
 #
-# since max.bulk.alt, max.bulk.af and max.bulk.binom.prob all essentially deal
-# with the same quantities, it is possible to specify NA for bulk.af and bulk.binom.prob
-# to disable filtering on that column.
+# if max.bulk.af or max.bulk.binom.prob are 1, then the filter would not remove
+# any sites (except perhaps NA/NaNs).  When that is the case, do not change
+# behavior w.r.t. requiring bulk.gt=0/0.
 #
-# XXX: any filter not dependent on specific single cell info (like min.bulk.dp)
-# should really be applied here.
+# Any filter not dependent on specific single cell info (e.g., min.bulk.dp)
+# should be applied here.
 annotate.gatk.candidate.loci <- function(gatk, snv.min.bulk.dp, snv.max.bulk.alt, snv.max.bulk.af, snv.max.bulk.binom.prob, indel.min.bulk.dp, indel.max.bulk.alt, indel.max.bulk.af, indel.max.bulk.binom.prob, mode=c('new', 'legacy'))
 {
     mode <- match.arg(mode)
@@ -305,14 +305,14 @@ annotate.gatk.candidate.loci <- function(gatk, snv.min.bulk.dp, snv.max.bulk.alt
     # from single cell to single cell, we prefer to handle them here.
     # bulk.af was never checked because max bulk alt was always 0 in legacy.
     if (mode == 'new') {
-        snv.allow.bulk.gt <- snv.max.bulk.alt > 0 | (!is.na(snv.max.bulk.af) & snv.max.bulk.af > 0) | (!is.na(snv.max.bulk.binom.prob) & snv.max.bulk.binom.prob > 0)
-        indel.allow.bulk.gt <- indel.max.bulk.alt > 0 | (is.na(indel.max.bulk.af) & indel.max.bulk.af > 0) | (!is.na(indel.max.bulk.binom.prob) & indel.max.bulk.binom.prob > 0)
+        snv.allow.bulk.gt <- snv.max.bulk.alt > 0 | (snv.max.bulk.af < 1 & snv.max.bulk.af > 0) | (snv.max.bulk.binom.prob < 1 & snv.max.bulk.binom.prob > 0)
+        indel.allow.bulk.gt <- indel.max.bulk.alt > 0 | (indel.max.bulk.af < 1 & indel.max.bulk.af > 0) | (indel.max.bulk.binom.prob < 1 & indel.max.bulk.binom.prob > 0)
 
         gatk[, somatic.candidate :=
             ((muttype == 'snv' & balt <= snv.max.bulk.alt & 
                 bulk.dp >= snv.min.bulk.dp &
-                !is.na(bulk.af) & (is.na(snv.max.bulk.af) | bulk.af <= snv.max.bulk.af) &
-                !is.na(bulk.binom.prob) & (is.na(snv.max.bulk.binom.prob) | bulk.binom.prob <= snv.max.bulk.binom.prob) &
+                !is.na(bulk.af) & bulk.af <= snv.max.bulk.af &
+                !is.na(bulk.binom.prob) & bulk.binom.prob <= snv.max.bulk.binom.prob &
                 (is.na(balt.lowmq) | balt.lowmq <= snv.max.bulk.alt) &
                 # to continue old SCAN2 (intended for non-clonal calling) behavior, require
                 # bulk.gt==0/0 when the user doesn't allow any bulk read support.
@@ -320,8 +320,8 @@ annotate.gatk.candidate.loci <- function(gatk, snv.min.bulk.dp, snv.max.bulk.alt
             ) |
             (muttype == 'indel' & balt <= indel.max.bulk.alt &
                 bulk.dp >= indel.min.bulk.dp &
-                !is.na(bulk.af) & (is.na(indel.max.bulk.af) | bulk.af <= indel.max.bulk.af) &
-                !is.na(bulk.binom.prob) & (is.na(indel.max.bulk.binom.prob) | bulk.binom.prob <= indel.max.bulk.binom.prob) &
+                !is.na(bulk.af) & bulk.af <= indel.max.bulk.af &
+                !is.na(bulk.binom.prob) & bulk.binom.prob <= indel.max.bulk.binom.prob &
                 (is.na(balt.lowmq) | balt.lowmq <= indel.max.bulk.alt) &
                 (indel.allow.bulk.gt | bulk.gt == '0/0')
             )) &
