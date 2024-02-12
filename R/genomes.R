@@ -95,8 +95,23 @@ genome.string.to.tiling <- function(genome=c('hs37d5', 'hg38', 'mm10'), tilewidt
     group <- match.arg(group)
 
     sqi <- genome.string.to.seqinfo.object(genome=genome)
-    # seqlevelsStyle()[1] - 'hs37d5' returns both NCBI and Ensembl as styles, pick the first one
     chroms.to.tile <- genome.string.to.chroms(genome=genome, sqi=sqi, group=group)
     grs <- GenomicRanges::tileGenome(seqlengths=sqi[chroms.to.tile], tilewidth=tilewidth, cut.last.tile.in.chrom=TRUE)
     grs
+}
+
+
+# Tile the genome with `tilewidth` windows, but only retain windows that overlap
+# an analyzed chunk of genome.  The "analyzed chunks of genome" are the `@gatk.regions`
+# stored in the SCAN2 objects (they are now always parsed from the configuration yaml
+# when making a SCAN2 object).
+# If you have a config.yaml file but no object, just build a dummy SCAN2 object with
+#   make.scan(config=config.yaml)
+restricted.genome.tiling <- function(object, tilewidth=10e6) {
+    sqi <- object@genome.seqinfo
+
+    # Always use group='all' - any unused contigs will be automatically discarded when
+    # intersecting against @gatk.regions
+    maximal.set <- genome.string.to.tiling(genome=object@genome.string, tilewidth=tilewidth, group='all')
+    maximal.set[countOverlaps(maximal.set, object@gatk.regions) > 0]
 }
