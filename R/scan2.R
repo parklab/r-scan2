@@ -9,7 +9,9 @@ setClassUnion('null.or.character', c('NULL', 'character'))
 # if adding new slots to the class, be sure to update concat(...)
 # to combine the slots properly.
 setClass("SCAN2", slots=c(
+    config='null.or.list',
     region='null.or.GRanges',
+    gatk.regions='null.or.GRanges',
     genome.string='character',
     genome.seqinfo='null.or.Seqinfo',
     single.cell='character',
@@ -31,6 +33,12 @@ setClass("SCAN2", slots=c(
     spatial.sensitivity='null.or.list'))
 
 
+# Just a wrapper on read_yaml for now.  Maybe some other handy parsing (or
+# checking) later.
+read.config <- function(file.name) {
+    yaml::read_yaml(file.name)
+}
+
 # "flip" the GP mu around 0 to best match the AF of each candidate mutation. 
 match.ab <- function(af, gp.mu) {
     ifelse(af < 1/2, -abs(gp.mu), abs(gp.mu))
@@ -46,27 +54,70 @@ check.chunked <- function(object, message) {
 }
 
 
-make.scan <- function(single.cell, bulk, genome=c('hs37d5', 'hg38', 'mm10'), region=NULL) {
-    genome <- match.arg(genome)
-    new("SCAN2", single.cell=single.cell, bulk=bulk,
-        genome.string=genome,
-        genome.seqinfo=genome.string.to.seqinfo.object(genome),
+# The user must supply a SCAN2 configuration as either:
+#       1. a path to the .yaml file or
+#       2. the parsed list stored in another SCAN2 object's @config slot
+# Only one of the above two methods can be used.
+make.scan <- function(config, config.path, single.cell='NOT_SPECIFIED_BY_USER', region=NULL) {
+    if (!missing(config) & !missing(config.path))
+        stop('only one of `config` or `config.path` can be specified, but was called with both')
+
+    # otherwise, config is already what we want
+    if (!missing(config.path))
+        config <- read.config(config.path)
+
+    object <- new("SCAN2",
+        config=config,
+        single.cell=single.cell,
+        bulk=config$bulk_sample,
+        genome.string=config$genome,
+        # calling genome.string.to.* will ensure genome.string is valid
+        genome.seqinfo=genome.string.to.seqinfo.object(config$genome),
         region=region,
+        static.filter.params=parse.static.filter.params(config),
+        gatk.regions=parse.gatk.regions.to.granges(config),
         gatk=NULL,
         ab.fits=NULL,
-        # these slots used to hold tables; now their data is incorporated into @gatk and
-        # they only record analysis parameters, if any apply.
         ab.estimates=NULL,
         mut.models=NULL,
         cigar.data=NULL,
         excess.cigar.scores=NULL,
-        static.filter.params=NULL,
         fdr.prior.data=NULL,
         fdr=NULL,
         call.mutations=NULL,
         mutburden=NULL,
         mutsig.rescue=NULL,
         spatial.sensitivity=NULL)
+    object
+}
+
+
+# Extract all static filter params from the configuration file
+parse.static.filter.params <- function(config) {
+    setNames(lapply(c('snv', 'indel'), function(mt) {
+        list(
+            min.sc.alt=config[[paste0(mt, '_min_sc_alt')]],
+            min.sc.dp=config[[paste0(mt, '_min_sc_dp')]],
+            max.bulk.alt=config[[paste0(mt, '_max_bulk_alt')]],
+            max.bulk.af=config[[paste0(mt, '_max_bulk_af')]],
+            max.bulk.binom.prob=config[[paste0(mt, '_max_bulk_binom_prob')]],
+            min.bulk.dp=config[[paste0(mt, '_min_bulk_dp')]],
+            exclude.dbsnp=config[[paste0(mt, '_exclude_dbsnp')]],
+            cg.id.q=config[[paste0(mt, '_cigar_id_score_quantile_cutoff')]],
+            cg.hs.q=config[[paste0(mt, '_cigar_hs_score_quantile_cutoff')]]
+        )
+    }), c('snv', 'indel'))
+}
+
+
+# Format of GATK intervals: chrom:start-end
+parse.gatk.regions.to.granges <- function(config) {
+    split1 <- strsplit(config$gatk_regions, ':')
+    split2 <- strsplit(sapply(split1, `[`, 2), '-')
+    # reduce(): the full range data is still stored in config if needed later
+    reduce(GRanges(seqnames=sapply(split1, `[`, 1),
+        ranges=IRanges(start=as.integer(sapply(split2, `[`, 1)),
+                       end=as.integer(sapply(split2, `[`, 2)))))
 }
 
 
@@ -175,8 +226,7 @@ setMethod("concat", signature="SCAN2", function(...) {
 
     init <- args[[1]]
 
-    ret <- make.scan(init@single.cell, init@bulk,
-        genome=init@genome.string,
+    ret <- make.scan(config=init@config, single.cell=init@single.cell,
         region=reduce(do.call(c, lapply(args, function(a) a@region))))
 
     # rbindlist quickly concatenates data.tables
@@ -551,49 +601,6 @@ setMethod("compute.fdr", "SCAN2", function(object, path, mode=c('legacy', 'new')
     object
 })
 
-
-setGeneric("add.static.filter.params", function(object, config.path,
-    muttype=c('snv', 'indel'), min.sc.alt=2, min.sc.dp=6,
-    max.bulk.alt=0, min.bulk.dp=11, exclude.dbsnp=TRUE, cg.id.q=0.05, cg.hs.q=0.05)
-        standardGeneric("add.static.filter.params"))
-setMethod("add.static.filter.params", "SCAN2",
-function(object, config.path, muttype=c('snv', 'indel'),
-    min.sc.alt=2, min.sc.dp=6, max.bulk.alt=0, min.bulk.dp=11,
-    exclude.dbsnp=TRUE, cg.id.q=0.05, cg.hs.q=0.05)
-{
-    if (!missing(muttype) & !missing(config.path))
-        stop('exactly one of muttype or config.path must be specified')
-
-    muttype <- match.arg(muttype)
-
-    # if a config file is given, it is expected to have explicit values for all settings
-    if (!missing(config.path)) {
-        yaml <- yaml::read_yaml(config.path)
-        for (mt in c('snv', 'indel')) {
-            object@static.filter.params[[mt]] <- list(
-                min.sc.alt=yaml[[paste0(mt, '_min_sc_alt')]],
-                min.sc.dp=yaml[[paste0(mt, '_min_sc_dp')]],
-                max.bulk.alt=yaml[[paste0(mt, '_max_bulk_alt')]],
-                max.bulk.af=yaml[[paste0(mt, '_max_bulk_af')]],
-                min.bulk.dp=yaml[[paste0(mt, '_min_bulk_dp')]],
-                # exclude.dbsnp, cg.id.q and cg.hs.q are not user configurable
-                # at the moment. the defaults in this function's signature are
-                # always used.
-                exclude.dbsnp=exclude.dbsnp,
-                cg.id.q=cg.id.q,
-                cg.hs.q=cg.hs.q
-            )
-        }
-    } else {
-        object@static.filter.params[[muttype]] <- list(
-            min.sc.alt=min.sc.alt, min.sc.dp=min.sc.dp,
-            max.bulk.alt=max.bulk.alt, max.bulk.af=1,  # ignored, cede control to max.bulk.alt
-            min.bulk.dp=min.bulk.dp,
-            exclude.dbsnp=exclude.dbsnp, cg.id.q=cg.id.q, cg.hs.q=cg.hs.q)
-    }
-    object
-})
-        
 
 # legacy mode - id.score/hs.score both must be strictly > the id/hs.score.q cutoffs.
 #               this was later found to be problematic for non-BWA MEM aligners that

@@ -25,68 +25,53 @@ perfcheck <- function(msg, expr, print.header=FALSE, report.mem=TRUE) {
 }
 
 
-run.pipeline <- function(
-    sc.sample, bulk.sample,
-    int.tab,
-    abfits,
-    sccigars, bulkcigars, trainingcigars,
-    dptab,
-    genome,
-    grs=genome.string.to.tiling(genome, tilewidth=10e6, group='auto'),
-    target.fdr=0.01,
-    config.yaml=NULL,
-    legacy=FALSE, report.mem=TRUE, verbose=TRUE)
+run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, trainingcigars, dptab,
+    # Tile the genome with 10MB tiles but only keep those that intersect the analyzed regions.
+    grs.for.parallelization=restricted.genome.tiling(object, tilewidth=10e6),
+    report.mem=TRUE, verbose=TRUE)
 {
-    cat('Starting chunked SCAN2 pipeline on', length(grs), 'chunks\n')
+    cat('Starting chunked SCAN2 pipeline on', length(grs.for.parallelization), 'chunks\n')
     cat('Setting OpenBLAS corecount to 1. This prevents multithreaded matrix multiplication in chunks where it is undesired.\n')
     RhpcBLASctl::blas_set_num_threads(1)
     cat('Parallelizing with', future::nbrOfWorkers(), 'cores\n')
     cat('Detailed chunk schedule:\n')
     cat(sprintf('%7s %5s %10s %10s\n', 'Chunk', 'Chr', 'Start', 'End'))
-    for (i in 1:length(grs)) {
-        cat(sprintf('%7d %5s %10d %10d\n',
-            i, as.character(seqnames(grs)[i]), start(grs)[i], end(grs)[i]))
+    for (i in 1:length(grs.for.parallelization)) {
+        cat(sprintf('%7d %5s %10d %10d\n', i,
+            as.character(seqnames(grs.for.parallelization)[i]),
+            start(grs.for.parallelization)[i],
+            end(grs.for.parallelization)[i]))
     }
 
+    mimic_legacy <- object@config$mimic_legacy
+    if (mimic_legacy) {
+        cat("mimic_legacy=TRUE: trying to reproduce very old pipeline behavior.\n")
+    }
     progressr::with_progress({
-        p <- progressr::progressor(along=1:length(grs))
+        p <- progressr::progressor(along=1:length(grs.for.parallelization))
         p(amount=0, class='sticky', perfcheck(print.header=TRUE))
-        xs <- future.apply::future_lapply(1:length(grs), function(i) {
-            gr <- grs[i,]
+        xs <- future.apply::future_lapply(1:length(grs.for.parallelization), function(i) {
+            gr <- grs.for.parallelization[i,]
             # Don't put the perfcheck() calls in p(), because progressr
-            # doesn't evaluate those arguments if progress bars re turned off.
-            pc <- perfcheck(paste('make.scan',i),
-                gt <- make.scan(single.cell=sc.sample, bulk=bulk.sample, genome=genome, region=gr), report.mem=report.mem)
-            p(class='sticky', amount=0, pc)
-
-            if (!is.null(config.yaml)) {
-                gt <- add.static.filter.params(gt, config.path=config.yaml)
-            } else {
-                # the default values in this function ARE NOT GUARANTEED
-                # to match the defaults in the scan2 script.
-                warning('config.yaml not specified, using R function default static filter parameters, which may not match the scan2 tool')
-                gt <- add.static.filter.params(gt, muttype='snv')
-                gt <- add.static.filter.params(gt, muttype='indel')
-            }
-
+            # doesn't evaluate those arguments if progress bars are turned off.
             pc <- perfcheck(paste('read.integrated.table',i),
-                gt <- read.integrated.table(gt, path=int.tab, quiet=!verbose), report.mem=report.mem)
+                object <- read.integrated.table(object, path=int.tab, quiet=!verbose), report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
             pc <- perfcheck(paste('add.ab.fits',i),
-                gt <- add.ab.fits(gt, path=abfits), report.mem=report.mem)
+                object <- add.ab.fits(object, path=abfits), report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
             pc <- perfcheck(paste('compute.ab.estimates',i),
-                gt <- compute.ab.estimates(gt, quiet=!verbose), report.mem=report.mem)
+                object <- compute.ab.estimates(object, quiet=!verbose), report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
             pc <- perfcheck(paste('add.cigar.data',i),
-                gt <- add.cigar.data(gt, sccigars, bulkcigars, quiet=!verbose), report.mem=report.mem)
+                object <- add.cigar.data(object, sccigars, bulkcigars, quiet=!verbose), report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
             pc <- perfcheck(paste('compute.models',i),
-                gt <- compute.models(gt, verbose=verbose), report.mem=report.mem)
+                object <- compute.models(object, verbose=verbose), report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
             # Note about legacy mode: legacy mode isn't actually legacy, it's what
@@ -97,12 +82,12 @@ run.pipeline <- function(
             # 2-d CIGAR op probability space with a fixed N (e.g., of gaussians) to
             # guarantee reasonable runtime.
             pc <- perfcheck(paste('compute.excess.cigar.scores',i),
-                gt <- compute.excess.cigar.scores(object=gt, path=trainingcigars, legacy=TRUE, quiet=!verbose),
+                object <- compute.excess.cigar.scores(object=object, path=trainingcigars, legacy=TRUE, quiet=!verbose),
                     report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
             pc <- perfcheck(paste('compute.static.filters',i),
-                gt <- compute.static.filters(gt, mode=ifelse(legacy, 'legacy', 'new')), report.mem=report.mem)
+                gt <- compute.static.filters(gt, mode=ifelse(mimic_legacy, 'legacy', 'new')), report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
             p()
@@ -113,9 +98,9 @@ run.pipeline <- function(
     cat("Chunked pipeline complete.\n")
 
     x <- do.call(concat, xs)
-    x <- compute.fdr.prior.data(x, mode=ifelse(legacy, 'legacy', 'new'), quiet=!verbose)
-    x <- compute.fdr(x, mode=ifelse(legacy, 'legacy', 'new'), quiet=!verbose)
-    x <- call.mutations(x, target.fdr=target.fdr, quiet=!verbose)
+    x <- compute.fdr.prior.data(x, mode=ifelse(mimic_legacy, 'legacy', 'new'), quiet=!verbose)
+    x <- compute.fdr(x, mode=ifelse(mimic_legacy, 'legacy', 'new'), quiet=!verbose)
+    x <- call.mutations(x, target.fdr=object@config$target.fdr, quiet=!verbose)
     x <- add.depth.profile(x, depth.path=dptab)
     x <- compute.mutburden(x)
     x
@@ -123,26 +108,31 @@ run.pipeline <- function(
 
 
 
+# `dummy.object` - A SCAN2 object with a configuration file already loaded
+#       and parsed.  Note that it doesn't make sense to have a real object
+#       here because the integrated table represents all cells from an
+#       individual while a SCAN2 object is meant to represent only one
+#       single cell.
+#
 # Full GATK annotation pipeline. Creates an annotated integrated table, which
 # contains many site-specific annotations and the full matrix of alt and ref
 # read counts for all single cells and bulks.
-make.integrated.table <- function(mmq60.tab, mmq1.tab, phased.vcf,
-    bulk.sample, sc.samples, genome,
-    snv.min.bulk.dp, indel.min.bulk.dp,
-    snv.max.bulk.alt=0, snv.max.bulk.af=0, snv.max.bulk.binom.prob=0,
-    indel.max.bulk.alt=0, indel.max.bulk.af=0, indel.max.bulk.binom.prob=0,
-    panel=NULL,
-    grs=genome.string.to.tiling(genome, tilewidth=10e6, group='auto'),
-    legacy=FALSE, quiet=TRUE, report.mem=FALSE)
+make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf, panel=NULL,
+    grs.for.parallelization=restricted.genome.tiling(dummy.object, tilewidth=10e6),
+    quiet=TRUE, report.mem=FALSE)
 {
-    cat('Starting integrated table pipeline on', length(grs), 'chunks.\n')
+    cat('Starting integrated table pipeline on', length(grs.for.parallelization), 'chunks.\n')
     cat('Parallelizing with', future::nbrOfWorkers(), 'cores.\n')
 
+    mimic_legacy <- dummy.object@config$mimic_legacy
+    if (mimic_legacy) {
+        cat("mimic_legacy=TRUE: trying to reproduce very old pipeline behavior.\n")
+    }
     progressr::with_progress({
-        p <- progressr::progressor(along=1:length(grs))
+        p <- progressr::progressor(along=1:length(grs.for.parallelization))
         p(amount=0, class='sticky', perfcheck(print.header=TRUE))
-        xs <- future.apply::future_lapply(1:length(grs), function(i) {
-            gr <- grs[i,]
+        xs <- future.apply::future_lapply(1:length(grs.for.parallelization), function(i) {
+            gr <- grs.for.parallelization[i,]
 
             pc <- perfcheck(paste('read and annotate raw data',i), {
                 gatk <- read.tabix.data(path=mmq60.tab, region=gr, quiet=quiet,
@@ -155,21 +145,24 @@ make.integrated.table <- function(mmq60.tab, mmq1.tab, phased.vcf,
                 samplespecific <- gatk[,-(1:7)]
 
                 annotate.gatk.counts(gatk.meta=sitewide, gatk=samplespecific,
-                    bulk.sample=bulk.sample, sc.samples=sc.samples, legacy=legacy, quiet=quiet)
-                annotate.gatk(gatk=sitewide, genome.string=genome, add.mutsig=TRUE)
-                annotate.gatk.lowmq(sitewide, path=mmq1.tab, bulk=bulk.sample, region=gr, quiet=quiet)
+                    bulk.sample=dummy.object@bulk, sc.samples=names(dummy.object@config$sc_bams),
+                    legacy=mimic_legacy, quiet=quiet)
+                annotate.gatk(gatk=sitewide, genome.string=dummy.object@genome.string, add.mutsig=TRUE)
+                annotate.gatk.lowmq(sitewide, path=mmq1.tab, bulk=dummy.object@bulk, region=gr, quiet=quiet)
                 annotate.gatk.phasing(sitewide, phasing.path=phased.vcf, region=gr, quiet=quiet)
                 annotate.gatk.panel(sitewide, panel.path=panel, region=gr, quiet=quiet)
+                snv.sfp <- dummy.object@static.filter.params$snv
+                indel.sfp <- dummy.object@static.filter.params$indel
                 annotate.gatk.candidate.loci(sitewide,
-                    snv.min.bulk.dp=snv.min.bulk.dp,
-                    snv.max.bulk.alt=snv.max.bulk.alt,
-                    snv.max.bulk.af=snv.max.bulk.af,
-                    snv.max.bulk.binom.prob=snv.max.bulk.binom.prob,
-                    indel.min.bulk.dp=indel.min.bulk.dp,
-                    indel.max.bulk.alt=indel.max.bulk.alt,
-                    indel.max.bulk.af=indel.max.bulk.af,
-                    indel.max.bulk.binom.prob=indel.max.bulk.binom.prob,
-                    mode=ifelse(legacy, 'legacy', 'new'))   # mode=new is still experimental
+                    snv.min.bulk.dp=snv.sfp$min.bulk.dp,
+                    snv.max.bulk.alt=snv.sfp$max.bulk.alt,
+                    snv.max.bulk.af=snv.sfp$max.bulk.af,
+                    snv.max.bulk.binom.prob=snv.sfp$max.bulk.binom.prob,
+                    indel.min.bulk.dp=indel.sfp$min.bulk.dp,
+                    indel.max.bulk.alt=indel.sfp$max.bulk.alt,
+                    indel.max.bulk.af=indel.sfp$max.bulk.af,
+                    indel.max.bulk.binom.prob=indel.sfp$max.bulk.binom.prob,
+                    mode=ifelse(mimic_legacy, 'legacy', 'new'))   # mode=new is still experimental
             }, report.mem=report.mem)
             p(class='sticky', amount=1, pc)
 
@@ -190,20 +183,41 @@ make.integrated.table <- function(mmq60.tab, mmq1.tab, phased.vcf,
 
 
 
+# This is simply a left join between two VCF files: one with all sites detected
+# in bulk (bulk.called.vcf) and a pre-supplied VCF with SNPs with known phase
+# already specified.  It'd be nice not to do this in R.
+#
+# This is an alternative to performing population phasing with SHAPEIT or Eagle.
+# Instead, the user can supply a dbSNP-like VCF with variants already phased by
+# some external approach.  Some useful applications of this are:
+#       1. Cross-bred mouse strains.  In the Luquette et al. Nat Genet 2022 paper,
+#          crossbred murine cells (musculus/spretus) were used.  Because of this,
+#          all heterozygous SNPs specific to spretus should be on the same haplotype
+#          (i.e., phased). The same logic applies to musculus specific SNPs.
+#          Therefore, essentially perfect phasing can be achieved a priori.
+#       2. Phasing by other datatypes.  There are several types of data that can
+#          phase variants (even at long range).  For example, long reads from
+#          PacBio can provide direct linkage over 10s of kilobases; different
+#          library prep for short read sequencing (long fragments); in some cell
+#          lines, single copy whole-chromosome losses have been induced and thus
+#          perfect phasing can be achieved for those chromosomes; etc.
+#       
 # The reason for chunking this pipeline is dbSNP can be 10s of GB, which requires
 # quite alot of RAM if read in its entirety.
-join.phased.hsnps <- function(bulk.called.vcf, hsnps.vcf, genome,
-    grs=genome.string.to.tiling(genome, tilewidth=10e6, group='auto'),
+#
+# `dummy.object` - this is only used to get grs.for.parallelization.
+join.phased.hsnps <- function(dummy.object, bulk.called.vcf, hsnps.vcf,
+    grs.for.parallelization=restricted.genome.tiling(dummy.object, tilewidth=10e6),
     quiet=TRUE, report.mem=FALSE)
 {
-    cat('Starting phased hSNP joining on', length(grs), 'chunks.\n')
+    cat('Starting phased hSNP joining on', length(grs.for.parallelization), 'chunks.\n')
     cat('Parallelizing with', future::nbrOfWorkers(), 'cores.\n')
 
     progressr::with_progress({
-        p <- progressr::progressor(along=1:length(grs))
+        p <- progressr::progressor(along=1:length(grs.for.parallelization))
         p(amount=0, class='sticky', perfcheck(print.header=TRUE))
-        xs <- future.apply::future_lapply(1:length(grs), function(i) {
-            gr <- grs[i,]
+        xs <- future.apply::future_lapply(1:length(grs.for.parallelization), function(i) {
+            gr <- grs.for.parallelization[i,]
 
             pc <- perfcheck(paste('read vcfs and join',i), {
                 # the per-sample genotype information is not relevant - we're just annotating
@@ -249,23 +263,22 @@ join.phased.hsnps <- function(bulk.called.vcf, hsnps.vcf, genome,
 
 
 
-digest.depth.profile <- function(path, sc.sample, bulk.sample,
-    genome, clamp.dp=500,
-    grs=genome.string.to.tiling(genome, tilewidth=10e6, group='auto'),
+digest.depth.profile <- function(object, matrix.path, clamp.dp=500,
+    grs.for.parallelization=restricted.genome.tiling(object, tilewidth=10e6),
     quiet=TRUE, report.mem=TRUE)
 {
-    cat('Digesting depth profile using', length(grs), 'chunks.\n')
+    cat('Digesting depth profile using', length(grs.for.parallelization), 'chunks.\n')
     cat('Parallelizing with', future::nbrOfWorkers(), 'cores.\n')
 
     progressr::with_progress({
-        p <- progressr::progressor(along=1:length(grs))
+        p <- progressr::progressor(along=1:length(grs.for.parallelization))
         p(amount=0, class='sticky', perfcheck(print.header=TRUE))
-        xs <- future.apply::future_lapply(1:length(grs), function(i) {
-            gr <- grs[i,]
+        xs <- future.apply::future_lapply(1:length(grs.for.parallelization), function(i) {
+            gr <- grs.for.parallelization[i,]
 
             pc <- perfcheck(paste('digest.depth.2sample',i),
-                dptab <- digest.depth.2sample(path=path, sc.sample=sc.sample,
-                    bulk.sample=bulk.sample, clamp.dp=clamp.dp, region=gr, quiet=quiet),
+                dptab <- digest.depth.2sample(path=matrix.path, sc.sample=object@single.cell,
+                    bulk.sample=object@bulk, clamp.dp=clamp.dp, region=gr, quiet=quiet),
                 report.mem=report.mem)
             p(class='sticky', amount=1, pc)
 
@@ -283,23 +296,24 @@ digest.depth.profile <- function(path, sc.sample, bulk.sample,
 
 # Recommended to use smaller tiles than the usual 10 MB. The files processed
 # here are basepair resolution and cover essentially the entire genome.
-make.callable.regions <- function(path, sc.sample, bulk.sample,
-    genome, min.sc.dp, min.bulk.dp,
-    grs=genome.string.to.tiling(genome, tilewidth=5e6, group='auto'),
+make.callable.regions <- function(object, matrix.path, muttype=c('snv', 'indel'),
+    grs.for.parallelization=restricted.genome.tiling(object, tilewidth=5e6),
     quiet=TRUE, report.mem=TRUE)
 {
-    cat('Getting callable regions using', length(grs), 'chunks.\n')
+    muttype <- match.arg(muttype)
+
+    cat('Getting callable regions using', length(grs.for.parallelization), 'chunks.\n')
     cat('Parallelizing with', future::nbrOfWorkers(), 'cores.\n')
 
     progressr::with_progress({
-        p <- progressr::progressor(along=1:length(grs))
+        p <- progressr::progressor(along=1:length(grs.for.parallelization))
         p(amount=0, class='sticky', perfcheck(print.header=TRUE))
-        xs <- future.apply::future_lapply(1:length(grs), function(i) {
-            gr <- grs[i,]
+        xs <- future.apply::future_lapply(1:length(grs.for.parallelization), function(i) {
+            gr <- grs.for.parallelization[i,]
 
             pc <- perfcheck(paste('compute.callable.region',i),
-                g <- compute.callable.region(path=path, sc.sample=sc.sample,
-                    bulk.sample=bulk.sample, min.sc.dp=min.sc.dp, min.bulk.dp=min.bulk.dp,
+                g <- compute.callable.region(path=matrix.path, sc.sample=object@single.cell,
+                    bulk.sample=object@bulk, min.sc.dp=min.sc.dp, min.bulk.dp=min.bulk.dp,
                     region=gr, quiet=quiet),
                 report.mem=report.mem)
             p(class='sticky', amount=1, pc)
@@ -313,10 +327,7 @@ make.callable.regions <- function(path, sc.sample, bulk.sample,
 }
 
 
-# Recommended to use smaller tiles than the usual 10 MB. The files processed
-# here are basepair resolution and cover essentially the entire genome.
-#
-# the values for the 2 following parameters are decently well tuned for the
+# The values for the 2 following parameters are decently well tuned for the
 # default n.chunks(=100) and n.permutations(=10,000).  if the ratio of
 # n.permutations/n.chunks is decreased, then so should these tuning
 # parameters.
