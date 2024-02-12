@@ -24,7 +24,7 @@ abmodel.fit.one.chrom <- function(path, sc.sample, chrom, genome.seqinfo,
 
     refine.records <- list()
     for (i in 1:refine.n.steps) {
-    cat('Chrom:', chrom, 'refinement step', i, 'n.chunks', n.chunks, '\n')
+        cat('Chrom:', chrom, 'refinement step', i, 'n.chunks', n.chunks, '\n')
             refine.record <- abmodel.refine.parameter.space(
                 hsnps, n.chunks=n.chunks, n.logp.samples.per.chunk=n.logp.samples.per.chunk,
                 top.n=refine.top.n, hsnp.tilesize=hsnp.tilesize,
