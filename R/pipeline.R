@@ -27,7 +27,8 @@ perfcheck <- function(msg, expr, print.header=FALSE, report.mem=TRUE) {
 
 run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, trainingcigars, dptab,
     # Tile the genome with 10MB tiles but only keep those that intersect the analyzed regions.
-    grs.for.parallelization=restricted.genome.tiling(object, tilewidth=10e6),
+    tilewidth.for.parallelization=10e6,
+    grs.for.parallelization=restricted.genome.tiling(object, tilewidth=tilewidth.for.parallelization),
     report.mem=TRUE, verbose=TRUE)
 {
     cat('Starting chunked SCAN2 pipeline on', length(grs.for.parallelization), 'chunks\n')
@@ -47,31 +48,40 @@ run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, training
     if (mimic_legacy) {
         cat("mimic_legacy=TRUE: trying to reproduce very old pipeline behavior.\n")
     }
+
     progressr::with_progress({
         p <- progressr::progressor(along=1:length(grs.for.parallelization))
         p(amount=0, class='sticky', perfcheck(print.header=TRUE))
         xs <- future.apply::future_lapply(1:length(grs.for.parallelization), function(i) {
             gr <- grs.for.parallelization[i,]
+
+            # even though copy() is a data.table function, it will copy this R object.
+            # the entire copy() call is probably not necessary since an internal copy-on-
+            # write *should* occur on the @region <- gr line below. However, the copy()
+            # call makes the desired behavior more explicit.
+            chunked.object <- data.table::copy(object)
+            chunked.object@region <- gr
+
             # Don't put the perfcheck() calls in p(), because progressr
             # doesn't evaluate those arguments if progress bars are turned off.
             pc <- perfcheck(paste('read.integrated.table',i),
-                object <- read.integrated.table(object, path=int.tab, quiet=!verbose), report.mem=report.mem)
+                chunked.object <- read.integrated.table(chunked.object, path=int.tab, quiet=!verbose), report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
             pc <- perfcheck(paste('add.ab.fits',i),
-                object <- add.ab.fits(object, path=abfits), report.mem=report.mem)
+                chunked.object <- add.ab.fits(chunked.object, path=abfits), report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
             pc <- perfcheck(paste('compute.ab.estimates',i),
-                object <- compute.ab.estimates(object, quiet=!verbose), report.mem=report.mem)
+                chunked.object <- compute.ab.estimates(chunked.object, quiet=!verbose), report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
             pc <- perfcheck(paste('add.cigar.data',i),
-                object <- add.cigar.data(object, sccigars, bulkcigars, quiet=!verbose), report.mem=report.mem)
+                chunked.object <- add.cigar.data(chunked.object, sccigars, bulkcigars, quiet=!verbose), report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
             pc <- perfcheck(paste('compute.models',i),
-                object <- compute.models(object, verbose=verbose), report.mem=report.mem)
+                chunked.object <- compute.models(chunked.object, verbose=verbose), report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
             # Note about legacy mode: legacy mode isn't actually legacy, it's what
@@ -82,20 +92,28 @@ run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, training
             # 2-d CIGAR op probability space with a fixed N (e.g., of gaussians) to
             # guarantee reasonable runtime.
             pc <- perfcheck(paste('compute.excess.cigar.scores',i),
-                object <- compute.excess.cigar.scores(object=object, path=trainingcigars, legacy=TRUE, quiet=!verbose),
+                chunked.object <- compute.excess.cigar.scores(object=chunked.object, path=trainingcigars, legacy=TRUE, quiet=!verbose),
                     report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
             pc <- perfcheck(paste('compute.static.filters',i),
-                gt <- compute.static.filters(gt, mode=ifelse(mimic_legacy, 'legacy', 'new')), report.mem=report.mem)
+                chunked.object <- compute.static.filters(object=chunked.object, mode=ifelse(mimic_legacy, 'legacy', 'new')), report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
             p()
-            gt
+            chunked.object
         }, future.seed=0)  # CRITICAL! library(future) ensures that each child process
                            # has a different random seed.
     })
     cat("Chunked pipeline complete.\n")
+
+    # The above future_apply with future.seed changed R's RNG implementation
+    # to L'Ecuyer-CMRG.  To maintain compatibility with older SCAN2 packages,
+    # need to reset to the R default Mersenne-Twister
+    if (mimic_legacy) {
+        orng <- RNGkind()
+        RNGkind('Mersenne-Twister')
+    }
 
     x <- do.call(concat, xs)
     x <- compute.fdr.prior.data(x, mode=ifelse(mimic_legacy, 'legacy', 'new'), quiet=!verbose)
@@ -118,7 +136,8 @@ run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, training
 # contains many site-specific annotations and the full matrix of alt and ref
 # read counts for all single cells and bulks.
 make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf, panel=NULL,
-    grs.for.parallelization=restricted.genome.tiling(dummy.object, tilewidth=10e6),
+    tilewidth.for.parallelization=10e6,
+    grs.for.parallelization=restricted.genome.tiling(dummy.object, tilewidth=tilewidth.for.parallelization),
     quiet=TRUE, report.mem=FALSE)
 {
     cat('Starting integrated table pipeline on', length(grs.for.parallelization), 'chunks.\n')
@@ -127,6 +146,8 @@ make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf,
     mimic_legacy <- dummy.object@config$mimic_legacy
     if (mimic_legacy) {
         cat("mimic_legacy=TRUE: trying to reproduce very old pipeline behavior.\n")
+        cat("mimic_legacy: WARNING: legacy resampled training sites (called hsnp_spikeins in legacy) will only be reproduced exactly if this pipeline is run on a single chromosome. Legacy resampling was performed one chromosome at a time; modern SCAN2 does not support this (and there is no reason to do so).\n")
+        cat("mimic_legacy: WARNING: As a result, scores that rely on training site distributions (like CIGAR scores) will not match.\n")
     }
     progressr::with_progress({
         p <- progressr::progressor(along=1:length(grs.for.parallelization))
@@ -162,12 +183,12 @@ make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf,
                     indel.max.bulk.alt=indel.sfp$max.bulk.alt,
                     indel.max.bulk.af=indel.sfp$max.bulk.af,
                     indel.max.bulk.binom.prob=indel.sfp$max.bulk.binom.prob,
-                    mode=ifelse(mimic_legacy, 'legacy', 'new'))   # mode=new is still experimental
+                    mode=ifelse(mimic_legacy, 'legacy', 'new'))
             }, report.mem=report.mem)
             p(class='sticky', amount=1, pc)
 
             cbind(sitewide, samplespecific)
-        })
+        }, future.seed=0)
     })
 
     gatk <- rbindlist(xs)
@@ -176,6 +197,15 @@ make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf,
     # candidates.
     if (nrow(gatk[somatic.candidate == TRUE]) == 0)
         stop('0 somatic candidates detected. SCAN2 requires somatic candidates to have 0 supporting reads in the matched bulk - perhaps your bulk is too closely related to your single cells?')
+
+    # The above future_apply with future.seed changed R's RNG implementation
+    # to L'Ecuyer-CMRG.  To maintain compatibility with older SCAN2 packages,
+    # need to reset to the R default Mersenne-Twister
+    if (mimic_legacy) {
+        orng <- RNGkind()
+        cat("Reverting RNG method from", orng[1], "to Mersenne-Twister for backward compatibility\n")
+        RNGkind('Mersenne-Twister')
+    }
 
     resampling.details <- gatk.resample.phased.sites(gatk)
     list(gatk=gatk, resampling.details=resampling.details)
@@ -207,7 +237,8 @@ make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf,
 #
 # `dummy.object` - this is only used to get grs.for.parallelization.
 join.phased.hsnps <- function(dummy.object, bulk.called.vcf, hsnps.vcf,
-    grs.for.parallelization=restricted.genome.tiling(dummy.object, tilewidth=10e6),
+    tilewidth.for.parallelization=10e6,
+    grs.for.parallelization=restricted.genome.tiling(dummy.object, tilewidth=tilewidth.for.parallelization),
     quiet=TRUE, report.mem=FALSE)
 {
     cat('Starting phased hSNP joining on', length(grs.for.parallelization), 'chunks.\n')
@@ -264,7 +295,8 @@ join.phased.hsnps <- function(dummy.object, bulk.called.vcf, hsnps.vcf,
 
 
 digest.depth.profile <- function(object, matrix.path, clamp.dp=500,
-    grs.for.parallelization=restricted.genome.tiling(object, tilewidth=10e6),
+    tilewidth.for.parallelization=10e6,
+    grs.for.parallelization=restricted.genome.tiling(object, tilewidth=tilewidth.for.parallelization),
     quiet=TRUE, report.mem=TRUE)
 {
     cat('Digesting depth profile using', length(grs.for.parallelization), 'chunks.\n')
@@ -297,7 +329,8 @@ digest.depth.profile <- function(object, matrix.path, clamp.dp=500,
 # Recommended to use smaller tiles than the usual 10 MB. The files processed
 # here are basepair resolution and cover essentially the entire genome.
 make.callable.regions <- function(object, matrix.path, muttype=c('snv', 'indel'),
-    grs.for.parallelization=restricted.genome.tiling(object, tilewidth=5e6),
+    tilewidth.for.parallelization=5e6,
+    grs.for.parallelization=restricted.genome.tiling(object, tilewidth=tilewidth.for.parallelization),
     quiet=TRUE, report.mem=TRUE)
 {
     muttype <- match.arg(muttype)
