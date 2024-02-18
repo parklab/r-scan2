@@ -1,7 +1,63 @@
 bulk_sample: hunamp
 sc_bams:
     h25: dummy.bam
-min_bulk_dp: 11
-min_sc_alt: 2
-min_sc_dp: 6
-max_bulk_alt: 0
+gatk_regions:
+    - 22:16000000-16999999
+    - 22:17000000-17999999
+    - 22:18000000-18999999
+    - 22:19000000-19999999
+    - 22:20000000-20999999
+    - 22:21000000-21999999
+    - 22:22000000-22999999
+    - 22:23000000-23999999
+    - 22:24000000-24999999
+    - 22:25000000-25999999
+    - 22:26000000-26999999
+    - 22:27000000-27999999
+    - 22:28000000-28999999
+    - 22:29000000-29999999
+    - 22:30000000-30999999
+    - 22:31000000-31999999
+    - 22:32000000-32999999
+    - 22:33000000-33999999
+    - 22:34000000-34999999
+    - 22:35000000-35999999
+    - 22:36000000-36999999
+    - 22:37000000-37999999
+    - 22:38000000-38999999
+    - 22:39000000-39999999
+    - 22:40000000-40999999
+    - 22:41000000-41999999
+    - 22:42000000-42999999
+    - 22:43000000-43999999
+    - 22:44000000-44999999
+    - 22:45000000-45999999
+    - 22:46000000-46999999
+    - 22:47000000-47999999
+    - 22:48000000-48999999
+    - 22:49000000-49999999
+genome: hs37d5
+indel_min_sc_alt: 2
+# Legacy code used a higher DP>=10 filter; however, it was only applied
+# in a post-processing step (the cross-sample panel was also performed in
+# that same post-processing step). So, to match the dp.test values of
+# legacy code, need to use (what seems like an incorrect value of) 6.
+indel_min_sc_dp: 6
+indel_max_bulk_alt: 0
+indel_max_bulk_af: 1
+indel_max_bulk_binom_prob: 1
+indel_min_bulk_dp: 11
+indel_exclude_dbsnp: true
+indel_cigar_id_score_quantile_cutoff: 0.05
+indel_cigar_hs_score_quantile_cutoff: 0.05
+mimic_legacy: true
+snv_min_sc_alt: 2
+snv_min_sc_dp: 6
+snv_max_bulk_alt: 0
+snv_max_bulk_af: 1
+snv_max_bulk_binom_prob: 1
+snv_min_bulk_dp: 11
+snv_exclude_dbsnp: true
+snv_cigar_id_score_quantile_cutoff: 0.05
+snv_cigar_hs_score_quantile_cutoff: 0.05
+target_fdr: 0.01
