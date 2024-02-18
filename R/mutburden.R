@@ -157,9 +157,10 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
         ret$pre.genotyping.burden <- pre.geno.burden
     
         ret$unsupported.filters <- sfp$max.bulk.alt > 0 |
-            # these two filters support a value of NA to prevent filtering
-            (!is.na(sfp$max.bulk.af) & sfp$max.bulk.af > 0) |
-            (!is.na(sfp$max.bulk.binom.prob) & sfp$max.bulk.binom.prob > 0)
+            # these filters are set to 1 by default, which means they do nothing and
+            # rely entirely on max.bulk.alt, which matches older version behavior.
+            (sfp$max.bulk.af < 1 & sfp$max.bulk.af > 0) |
+            (sfp$max.bulk.binom.prob < 1 & sfp$max.bulk.binom.prob > 0)
 
         if (any(ret$unsupported.filters)) {
             warning('mutation burdens must be extrapolated without clonal mutations (i.e., max.bulk.alt=0 and max.bulk.af=0)! burdens will be estimated, but they are invalid')
