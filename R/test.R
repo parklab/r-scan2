@@ -2,36 +2,45 @@
 check.length <- function(a, b, msg) {
     ret <- length(a) != length(b)
     if (ret)
-        cat(sprintf('FAILED lengths (a=%d, b=%d): %s', length(a), length(b), msg))
+        cat(sprintf('test: %-30sFAILED equal input lengths (a=%d, b=%d)\n', msg, length(a), length(b)))
     return(ret)
 }
 
 
-test.equal <- function(a, b, msg) {
+test.equal <- function(a, b, msg, verbose=FALSE) {
     if (check.length(a, b, msg))
         return()
     nfail <- sum(xor(is.na(a), is.na(b)) | a != b, na.rm=TRUE)
     if (nfail > 0)
-        cat(paste0('FAILED (',nfail,') equality:', msg, '\n'))
-    else cat('.')
+        cat(sprintf("test: %-30sFAILED equality (%d sites)\n", msg, nfail))
+    else {
+        if (verbose) cat(sprintf("test: %-30sPASS\n", msg))
+        else cat('.')
+    }
 }
 
 
-test.tol <- function(a, b, msg, tolerance=1e-6) {
+test.tol <- function(a, b, msg, tolerance=1e-6, verbose=FALSE) {
     if (check.length(a, b, msg))
         return()
     nfail <- sum(xor(is.na(a), is.na(b)) | abs(a-b) > tolerance, na.rm=TRUE)
     if (nfail > 0) {
-        cat(sprintf('FAILED (%d) tolerance (%f):', nfail, tolerance), msg, '\n')
+        cat(sprintf('test: %-30sFAILED equality w/tolerance=%f (%d sites)\n', msg, nfail, tolerance))
         w <- which(xor(is.na(a), is.na(b)) | abs(a - b) > 
             tolerance)
         cat('indexes: '); print(w)
         cat('abs(diffs): '); print(abs(a-b)[w])
-    } else cat('.')
+    } else {
+        if (verbose) cat(sprintf("test: %-30sPASS\n", msg))
+        else cat('.')
+    }
 }
 
 
-testpipe <- function(test.data=c('legacy_tiny', 'legacy_chr22', 'legacy_custom'), verbose=FALSE, custom=NULL, legacy=TRUE, n.cores=future::availableCores())
+# Prebuilt integrated tables are distributed for the standard test
+# sets. Rebuilding is only necessary if the parsing code for combining
+# and annotating GATK tables, phasing and cross-sample panels changes.
+testpipe <- function(test.data=c('legacy_tiny', 'legacy_chr22', 'legacy_custom'), verbose=FALSE, custom=NULL, legacy=TRUE, n.cores=future::availableCores(), rebuild.integrated.table=TRUE)
 {
     if (n.cores > 1) {
         require(future)
@@ -46,10 +55,12 @@ testpipe <- function(test.data=c('legacy_tiny', 'legacy_chr22', 'legacy_custom')
     if (test.data != 'legacy_custom') {
         sc.sample <- 'h25'
         bulk.sample <- 'hunamp'
+        tilewidth <- 1e6        # the legacy datasets are small
         fpath <- function(...) system.file('extdata', paste0(test.data, '_', ...), package='scan2')
     } else {
         sc.sample <- custom$sc.sample
         bulk.sample <- custom$bulk.sample
+        tilewidth <- custom$tilewidth
         fpath <- function(...) paste0(custom$path, '/', ...)
     }
 
@@ -62,40 +73,37 @@ testpipe <- function(test.data=c('legacy_tiny', 'legacy_chr22', 'legacy_custom')
     bulkcigars <- fpath('bulk_combined_4_files_cigars.tab.gz')
     trainingcigars <- fpath('cigardata.tab.gz')
     dptab <- fpath('sc_dptab.rda')
+    config.yaml <- fpath('config.yaml')
 
-    if (test.data == 'legacy_tiny') {
-        grs <- GRanges(seqnames=22, ranges=IRanges(start=c(30e6, 31e6),
-            end=c(30999999, 31999999)))
-    } else if (test.data == 'legacy_chr22') {
-        # Cover chr22 with 1mb tiles
-        grs <- tileGenome(seqlengths=genome.string.to.seqinfo.object('hs37d5')[as.character(22)], tilewidth=1e6, cut.last.tile.in.chrom=TRUE)
-    } else if (test.data == 'legacy_custom') {
-        grs <- custom$grs
+    if (rebuild.integrated.table) {
+        # This is a file to be written out. Would be nice to allow an already-created
+        # table to be supplied to run.pipeline, but that would require special support
+        # for chunked parallelization. Just take the easy path and write out a temp file.
+        int.tab.path <- tempfile()
+        int.tab.gz.path <- paste0(int.tab.path, '.gz')
+
+        # A dummy object contains no actual single cell ID.  This is appropriate for
+        # making the integrated table because the integrated table represents all
+        # cells in an analysis.
+        dummy.object <- make.scan(config.path=config.yaml)
+        x <- make.integrated.table(dummy.object=dummy.object,
+            mmq60.tab=mmq60, mmq1.tab=mmq1,
+            phased.vcf=phased.vcf, panel=panel,
+            tilewidth.for.parallelization=tilewidth)
+        write.integrated.table(inttab=x$gatk, out.tab=int.tab.path, out.tab.gz=int.tab.gz.path)
+    } else {
+        cat("Using prebuilt integrated table. Use rebuild.integrated.table=TRUE to test table integration code.\n")
+        int.tab.gz.path <- fpath('integrated_table.tab.gz')
     }
 
-    int.tab.path <- tempfile()
-    int.tab.gz.path <- paste0(int.tab.path, '.gz')
-    x <- make.integrated.table(mmq60.tab=mmq60, mmq1.tab=mmq1,
-        phased.vcf=phased.vcf, panel=panel,
-        bulk.sample=bulk.sample,
-        sc.sample=sc.sample,
-        # new support for clonal mutations: allow alt read support in bulk. but legacy did not allow this.
-        snv.max.bulk.alt=0,
-        snv.max.bulk.af=0,
-        snv.max.bulk.binom.prob=0,
-        snv.min.bulk.dp=6,
-        indel.max.bulk.alt=0, 
-        indel.max.bulk.af=0, 
-        indel.min.bulk.dp=10,
-        indel.max.bulk.binom.prob=0,
-        genome='hs37d5', legacy=legacy, grs=grs)
-    write.integrated.table(inttab=x$gatk, out.tab=int.tab.path, out.tab.gz=int.tab.gz.path)
-
-    ret <- run.pipeline(sc.sample=sc.sample, bulk.sample=bulk.sample,
+    # Now a true object for a specific single cell is needed
+    object <- make.scan(single.cell=sc.sample, config.path=config.yaml)
+    ret <- run.pipeline(object=object,
         int.tab=int.tab.gz.path, abfits=abfits,
         sccigars=sccigars, bulkcigars=bulkcigars,
         trainingcigars=trainingcigars, dptab=dptab,
-        legacy=legacy, genome='hs37d5', grs=grs, verbose=FALSE)
+        tilewidth.for.parallelization=tilewidth,
+        verbose=FALSE)
 
     # Using old files (particularly CIGAR op count tables) allows comparison
     # of some columns that no longer make sense to compare.
@@ -112,7 +120,8 @@ test.output <- function(pipeline.output,
     test.data=attr(pipeline.output, 'testpipe.test.data'),
     custom=attr(pipeline.output, 'testpipe.custom'),
     legacy=attr(pipeline.output, 'testpipe.legacy'),
-    old.files=attr(pipeline.output, 'testpipe.oldfiles'))
+    old.files=attr(pipeline.output, 'testpipe.oldfiles'),
+    verbose=TRUE)
 {
     for (mt in c('snv', 'indel')) {
         if (test.data != 'legacy_custom') {
@@ -124,7 +133,7 @@ test.output <- function(pipeline.output,
         }
 
         l <- get(load(legacy.rda))
-        cat(' MUTTYPE =', mt, '-------------------------------------------\n')
+        cat('MUTTYPE =', mt, '-------------------------------------------\n')
 
         # necessary to look at a subset of the legacy output and pipeline
         # output. in the new pipeline's legacy mode, sites that are not admitted
@@ -168,74 +177,74 @@ test.output <- function(pipeline.output,
             rownames(l) <- NULL
         }
 
-        test.equal(l$chr, p$chr, "chr")
-        test.equal(l$pos, p$pos, "pos")
-        test.equal(l$refnt, p$refnt, "refnt")
-        test.equal(l$altnt, p$altnt, "altnt")
-        test.equal(l$dbsnp, p$dbsnp, "dbsnp")
-        test.equal(l$h25, p$h25, "h25")
-        test.equal(l$hunamp, p$bulk.gt, "bulk.gt")  # used to be called hunamp, now unambiguously labeled as bulk.gt
-        test.equal(l$dp, p$dp, "dp")
-        test.equal(l$af, p$af, "af")
-        test.equal(l$bulk.dp, p$bulk.dp, "bulk.dp")
+        test.equal(l$chr, p$chr, "chr", verbose=verbose)
+        test.equal(l$pos, p$pos, "pos", verbose=verbose)
+        test.equal(l$refnt, p$refnt, "refnt", verbose=verbose)
+        test.equal(l$altnt, p$altnt, "altnt", verbose=verbose)
+        test.equal(l$dbsnp, p$dbsnp, "dbsnp", verbose=verbose)
+        test.equal(l$h25, p$h25, "h25", verbose=verbose)
+        test.equal(l$hunamp, p$bulk.gt, "bulk.gt", verbose=verbose)  # used to be called hunamp, now unambiguously labeled as bulk.gt
+        test.equal(l$dp, p$dp, "dp", verbose=verbose)
+        test.equal(l$af, p$af, "af", verbose=verbose)
+        test.equal(l$bulk.dp, p$bulk.dp, "bulk.dp", verbose=verbose)
     
-        test.tol(abs(l$gp.mu), abs(p$gp.mu), "gp.mu")
-        test.tol(l$gp.sd, p$gp.sd, "gp.sd")
-        test.tol(pmin(l$ab,1-l$ab), pmin(p$ab,1-p$ab), "ab")
-        test.tol(l$abc.pv, p$abc.pv, "abc.pv")
-        test.tol(l$lysis.pv, p$lysis.pv, "lysis.pv")
-        test.tol(l$mda.pv, p$mda.pv, "mda.pv")
-        test.tol(l$nt, p$nt, "nt")
-        test.tol(l$na, p$na, "na")
+        test.tol(abs(l$gp.mu), abs(p$gp.mu), "gp.mu", verbose=verbose)
+        test.tol(l$gp.sd, p$gp.sd, "gp.sd", verbose=verbose)
+        test.tol(pmin(l$ab,1-l$ab), pmin(p$ab,1-p$ab), "ab", verbose=verbose)
+        test.tol(l$abc.pv, p$abc.pv, "abc.pv", verbose=verbose)
+        test.tol(l$lysis.pv, p$lysis.pv, "lysis.pv", verbose=verbose)
+        test.tol(l$mda.pv, p$mda.pv, "mda.pv", verbose=verbose)
+        test.tol(l$nt, p$nt, "nt", verbose=verbose)
+        test.tol(l$na, p$na, "na", verbose=verbose)
         # the beta in the current SCAN2 table is not derived from the same min.
         # FDR method used in legacy. the old beta is computed internally when
         # calculating the final FDR estimates, but it is not saved in the table.
-        #test.tol(l$lysis.beta, p$lysis.beta, "lysis.beta")
-        test.tol(l$lysis.fdr, p$lysis.fdr, "lysis.fdr")
-        #test.tol(l$mda.beta, p$mda.beta, "mda.beta")
-        test.tol(l$mda.fdr, p$mda.fdr, "mda.fdr")
+        #test.tol(l$lysis.beta, p$lysis.beta, "lysis.beta", verbose=verbose)
+        test.tol(l$lysis.fdr, p$lysis.fdr, "lysis.fdr", verbose=verbose)
+        #test.tol(l$mda.beta, p$mda.beta, "mda.beta", verbose=verbose)
+        test.tol(l$mda.fdr, p$mda.fdr, "mda.fdr", verbose=verbose)
 
         # test cross sample panel values
         if (mt == 'indel') {
-            test.equal(l$nalleles, p$nalleles, 'panel: nalleles')
-            test.equal(l$unique.donors, p$unique.donors, 'panel: unique.donors')
-            test.equal(l$unique.cells, p$unique.cells, 'panel: unique.cells')
-            test.equal(l$unique.bulks, p$unique.bulks, 'panel: unique.bulks')
-            test.equal(l$max.out, p$max.out, 'panel: max.out')
-            test.equal(l$sum.out, p$sum.out, 'panel: sum.out')
-            test.equal(l$sum.bulk, p$sum.bulk, 'panel: sum.bulk')
+            test.equal(l$nalleles, p$nalleles, 'panel: nalleles', verbose=verbose)
+            test.equal(l$unique.donors, p$unique.donors, 'panel: unique.donors', verbose=verbose)
+            test.equal(l$unique.cells, p$unique.cells, 'panel: unique.cells', verbose=verbose)
+            test.equal(l$unique.bulks, p$unique.bulks, 'panel: unique.bulks', verbose=verbose)
+            test.equal(l$max.out, p$max.out, 'panel: max.out', verbose=verbose)
+            test.equal(l$sum.out, p$sum.out, 'panel: sum.out', verbose=verbose)
+            test.equal(l$sum.bulk, p$sum.bulk, 'panel: sum.bulk', verbose=verbose)
         }
 
         # CIGARs are necessarily different because the legacy script (which used
-        # samtools view at every candidate site and was too slow for all-sites mode)
+        # samtools view at every candidate site and was too slow for all-sites mode, verbose=verbose)
         # produces different CIGAR counts than the new script (which uses pysam).
         # the counts generally trend together very well, but they would have to be
         # exact for these tests to work out.
         if (!is.null(old.files)) {
             if (old.files) {
-                test.tol(l$id.score.y, p$id.score.y, "id.score.y")
-                test.tol(l$id.score.x, p$id.score.x, "id.score.x")
-                test.tol(l$id.score, p$id.score, "id.score")
-                test.tol(l$hs.score.y, p$hs.score.y, "hs.score.y")
-                test.tol(l$hs.score.x, p$hs.score.x, "hs.score.x")
-                test.tol(l$hs.score, p$hs.score, "hs.score")
-                test.tol(l$cigar.id.test, p$cigar.id.test, "cigar.id.test")
-                test.tol(l$cigar.hs.test, p$cigar.hs.test, "cigar.hs.test")
+                test.tol(l$id.score.y, p$id.score.y, "id.score.y", verbose=verbose)
+                test.tol(l$id.score.x, p$id.score.x, "id.score.x", verbose=verbose)
+                test.tol(l$id.score, p$id.score, "id.score", verbose=verbose)
+                test.tol(l$hs.score.y, p$hs.score.y, "hs.score.y", verbose=verbose)
+                test.tol(l$hs.score.x, p$hs.score.x, "hs.score.x", verbose=verbose)
+                test.tol(l$hs.score, p$hs.score, "hs.score", verbose=verbose)
+                test.tol(l$cigar.id.test, p$cigar.id.test, "cigar.id.test", verbose=verbose)
+                test.tol(l$cigar.hs.test, p$cigar.hs.test, "cigar.hs.test", verbose=verbose)
         
-                test.equal(l$M.cigars, p$M.cigars, "M.cigars")
-                test.equal(l$ID.cigars, p$ID.cigars, "ID.cigars")
-                test.equal(l$HS.cigars, p$HS.cigars, "HS.cigars")
-                test.equal(l$other.cigars, p$other.cigars, "other.cigars")
-                test.equal(l$dp.cigars, p$dp.cigars, "dp.cigars")
-                test.equal(l$M.cigars.bulk, p$M.cigars.bulk, "M.cigars.bulk")
-                test.equal(l$ID.cigars.bulk, p$ID.cigars.bulk, "ID.cigars.bulk")
-                test.equal(l$HS.cigars.bulk, p$HS.cigars.bulk, "HS.cigars.bulk")
-                test.equal(l$other.cigars.bulk, p$other.cigars.bulk, "other.cigars.bulk")
-                test.equal(l$dp.cigars.bulk, p$dp.cigars.bulk, "dp.cigars.bulk")
+                test.equal(l$M.cigars, p$M.cigars, "M.cigars", verbose=verbose)
+                test.equal(l$ID.cigars, p$ID.cigars, "ID.cigars", verbose=verbose)
+                test.equal(l$HS.cigars, p$HS.cigars, "HS.cigars", verbose=verbose)
+                test.equal(l$other.cigars, p$other.cigars, "other.cigars", verbose=verbose)
+                test.equal(l$dp.cigars, p$dp.cigars, "dp.cigars", verbose=verbose)
+                test.equal(l$M.cigars.bulk, p$M.cigars.bulk, "M.cigars.bulk", verbose=verbose)
+                test.equal(l$ID.cigars.bulk, p$ID.cigars.bulk, "ID.cigars.bulk", verbose=verbose)
+                test.equal(l$HS.cigars.bulk, p$HS.cigars.bulk, "HS.cigars.bulk", verbose=verbose)
+                test.equal(l$other.cigars.bulk, p$other.cigars.bulk, "other.cigars.bulk", verbose=verbose)
+                test.equal(l$dp.cigars.bulk, p$dp.cigars.bulk, "dp.cigars.bulk", verbose=verbose)
             }
         }
-        test.equal(l$lowmq.test, p$lowmq.test, "lowmq.test")
-        test.equal(l$dp.test, p$dp.test, "dp.test")
+        test.equal(l$lowmq.test, p$lowmq.test, "lowmq.test", verbose=verbose)
+        test.equal(l$dp.test, p$dp.test, "dp.test", verbose=verbose)
         cat('\n')
     }
 }
