@@ -82,6 +82,8 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
     autosome.names <- genome.string.to.chroms(object@genome.string, group='auto')
     muttypes <- c('snv', 'indel')
     object@mutburden <- setNames(lapply(muttypes, function(mt) {
+        reason <- ''
+
         # [2] is the maximum burden; the minimum burden [1] is almost always ~0
         pre.geno.burden <- object@fdr.prior.data[[mt]]$burden[2]
         sfp <- object@static.filter.params[[mt]]
@@ -89,21 +91,22 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
         # germline sites
         g <- object@gatk[chr %in% autosome.names & resampled.training.site == TRUE & muttype == mt]
 
-        # (single cell  x  bulk) depth table
-        dptab <- object@depth.profile$dptab
-        dptab <- dptab[1:min(max(g$dp)+1, nrow(dptab)),]
-
         # these computations rely on there being a reasonably large number
         # of germline sites tested. even 100 is very few; we expect more like
         # 100,000.
         if (nrow(g) < 100) {
             warning(paste('only', nrow(g), 'resampled germline', mt, 'sites were detected; aborting genome-wide extrapolation. Typical whole-genome experiments include ~10-100,000 germline sites'))
+            reason <- paste0('insufficient germline sites (', nrow(g), ')')
             ret <- data.frame(
                 ncalls=NA,
                 callable.sens=NA,
                 callable.bp=NA
             )[c(1,1,1),]  # repeat row 1 3 times
         } else {
+            # (single cell  x  bulk) depth table
+            dptab <- object@depth.profile$dptab
+            dptab <- dptab[1:min(max(g$dp)+1, nrow(dptab)),]
+
             # somatic sites
             s <- object@gatk[chr %in% autosome.names & pass == TRUE & muttype == mt]
 
@@ -118,6 +121,7 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
                 callable.sens <- rep(NA, 3)
                 rowqs <- rep(NA, 3)
                 callable.bp <- rep(NA, 3)
+                reason <- paste0('could not create ', q, ' depth quantiles on germline sites; likely >25% of germline sites have depth=0')
                 warning(paste('could not derive unique breakpoints for quartiles of sequencing depth at germline hSNPs.  this usually indicates that sequencing depth is heavily skewed toward low depths (typically DP=0)\ngot qbreaks = ', deparse(qbreaks)))
             } else {
                 # s also uses g-based depth quantiles
@@ -163,8 +167,11 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
             (sfp$max.bulk.binom.prob < 1 & sfp$max.bulk.binom.prob > 0)
 
         if (any(ret$unsupported.filters)) {
-            warning('mutation burdens must be extrapolated without clonal mutations (i.e., max.bulk.alt=0 and max.bulk.af=0)! burdens will be estimated, but they are invalid')
+            reason <- 'unsupported bulk filters, any of: max_bulk_alt, max_bulk_af or max_bulk_binom_prob'
+            warning('mutation burdens must be extrapolated on autosomes and without clonal mutations (i.e., max.bulk.alt=0 and max.bulk.af=0)! burdens will be estimated, but they are invalid')
         }
+
+        ret$reason <- reason
         ret
     }), muttypes)
 
