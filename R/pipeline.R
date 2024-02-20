@@ -59,8 +59,14 @@ run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, training
             # the entire copy() call is probably not necessary since an internal copy-on-
             # write *should* occur on the @region <- gr line below. However, the copy()
             # call makes the desired behavior more explicit.
-            chunked.object <- data.table::copy(object)
-            chunked.object@region <- gr
+            # note there is no data.table in `object` yet, the copy here is to make a
+            # chunked object with the same config values and parameters as the user-
+            # supplied `object`.  SCAN2 uses the @region slot to parallelize, meaning
+            # the same `object` from the caller of this function cannot be reused.
+            #chunked.object <- data.table::copy(object)
+            #chunked.object@region <- gr
+
+            chunked.object <- make.scan(config=object@config, single.cell=object@single.cell, region=gr)
 
             # Don't put the perfcheck() calls in p(), because progressr
             # doesn't evaluate those arguments if progress bars are turned off.
@@ -115,12 +121,36 @@ run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, training
         RNGkind('Mersenne-Twister')
     }
 
-    x <- do.call(concat, xs)
-    x <- compute.fdr.prior.data(x, mode=ifelse(mimic_legacy, 'legacy', 'new'), quiet=!verbose)
-    x <- compute.fdr(x, mode=ifelse(mimic_legacy, 'legacy', 'new'), quiet=!verbose)
-    x <- call.mutations(x, target.fdr=object@config$target.fdr, quiet=!verbose)
-    x <- add.depth.profile(x, depth.path=dptab)
-    x <- compute.mutburden(x)
+    pc <- perfcheck('concatenating chunked objects',
+        x <- do.call(concat, xs),
+        report.mem=report.mem)
+    cat(pc, '\n')
+
+    pc <- perfcheck('compute.fdr.prior.data',
+        x <- compute.fdr.prior.data(x, mode=ifelse(mimic_legacy, 'legacy', 'new'), quiet=!verbose),
+        report.mem=report.mem)
+    cat(pc, '\n')
+
+    pc <- perfcheck('compute.fdr',
+        x <- compute.fdr(x, mode=ifelse(mimic_legacy, 'legacy', 'new'), quiet=!verbose),
+        report.mem=report.mem)
+    cat(pc, '\n')
+
+    pc <- perfcheck('call.mutations',
+        x <- call.mutations(x, target.fdr=object@config$target_fdr, quiet=!verbose),
+        report.mem=report.mem)
+    cat(pc, '\n')
+
+    pc <- perfcheck('add.depth.profile',
+        x <- add.depth.profile(x, depth.path=dptab),
+        report.mem=report.mem)
+    cat(pc, '\n')
+
+    pc <- perfcheck('compute.mutburden',
+        x <- compute.mutburden(x),
+        report.mem=report.mem)
+    cat(pc, '\n')
+
     x
 }
 
