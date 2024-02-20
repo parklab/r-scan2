@@ -227,8 +227,17 @@ setMethod("concat", signature="SCAN2", function(...) {
     if (length(args) == 0)
         stop('tried to concat() 0 objects')
 
-    if (length(args) == 1)
-        return(args[[1]])
+    # This may seem like a good idea, but it is inconsistent behavior. For args>1
+    # the code below creates a concatenated *copy* of the input data, while this
+    # would not create a copy.  Copies are unfortunately necessary in counter-
+    # intuitive ways. E.g., when returning `data.tables` (which are inside SCAN2
+    # objects) from future-parallelized loops (e.g., future_lapply), the memory
+    # hackery used by data.table to enable update-by-reference cannot be passed
+    # back from forked R child processes. These returned data.tables will then
+    # *silently* fail all update-by-ref operations (the `:=` operator), leading
+    # to downstream errors when columns that should be present are missing.
+    #if (length(args) == 1)
+        #return(args[[1]])
 
     init <- args[[1]]
 
@@ -532,8 +541,7 @@ setMethod("compute.fdr.prior.data", "SCAN2", function(object, mode=c('legacy', '
             hets <- object@gatk[muttype == mt & training.site == TRUE & scalt >= sfp$min.sc.alt & dp >= sfp$min.sc.dp & bulk.dp >= sfp$min.bulk.dp]
         }
     
-        # Add the mode used to the fdr prior data structure
-        c(compute.fdr.prior.data.for.candidates(candidates=cand, hsnps=hets, random.seed=0, quiet=quiet), mode=mode)
+        compute.fdr.prior.data.for.candidates(candidates=cand, hsnps=hets, random.seed=0, quiet=quiet, legacy=mode == 'legacy')
     }), muttypes), list(mode=mode))
 
     object
