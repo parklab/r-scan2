@@ -244,11 +244,13 @@ setMethod("show.mutburden", "SCAN2", function(object) {
         cat('\n')
         for (mt in c('snv', 'indel')) {
             mb <- object@mutburden[[mt]][2,]  # row 2 is middle 50%
-            cat(sprintf("#       %6s: %6d somatic,   %0.1f%% sens,   %0.3f callable Gbp,   %0.1f muts/haploid Gbp,   %0.1f muts per genome%s%s\n",
+            cat(sprintf("#       %6s: %6d somatic,   %0.1f%% sens,   %0.3f callable Gbp,   %0.1f muts/haploid Gbp,   %0.1f muts per genome%s%s%s\n",
                 mt, mb$ncalls, 100*mb$callable.sens, mb$callable.bp/1e9, mb$rate.per.gb, mutburden(object, muttype=mt),
+                # all "reason" entries are identical
+                ifelse(any(mb$reason != ''), paste0(' (INVALID: ', mb$reason[1], ')'), ''),
                 ifelse(any(mb$unsupported.filters), ' (INVALID: static.filter.params)', ''),
                 ifelse(mt=='indel' & (object@call.mutations$suppress.all.indels | object@call.mutations$suppress.shared.indels), ' (INVALID: cross-sample panel insufficient)', '')
-                ))
+            ))
         }
     }
 })
