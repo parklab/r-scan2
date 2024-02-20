@@ -342,7 +342,7 @@ fcontrol <- function(germ.df, som.df, bins=20, rough.interval=0.99, eps=0.1, qui
 }
 
 
-compute.fdr.prior.data.for.candidates <- function(candidates, hsnps, bins=20, random.seed=0, quiet=FALSE, eps=0.1)
+compute.fdr.prior.data.for.candidates <- function(candidates, hsnps, bins=20, random.seed=0, quiet=FALSE, eps=0.1, legacy=FALSE)
 {
     if (nrow(hsnps) == 0 & nrow(candidates) > 0)
         stop(paste('0 hsnps provided but', nrow(candidates), 'candidate sites provided'))
@@ -367,22 +367,41 @@ compute.fdr.prior.data.for.candidates <- function(candidates, hsnps, bins=20, ra
 
     progressr::with_progress({
         if (!quiet) p <- progressr::progressor(along=0:(max.dp+1))
-        # These simulations really aren't slow enough to necessitate parallelizing
-        #fcs <- future.apply::future_lapply(0:max.dp, function(thisdp) {
-        fcs <- lapply(0:max.dp, function(thisdp) {
-            ret <- fcontrol(germ.df=hsnps[dp == thisdp],
-                    som.df=candidates[dp == thisdp],
-                    bins=bins, eps=eps, quiet=quiet)
+
+        # future_lapply makes it a little difficult to obtain legacy output because of
+        # different handling of random seeds. it's probably possible to set future
+        # parameters to use a single seed=0 MersenneTwister RNG, but i haven't 
+        # explored that.
+        if (legacy) {
+            fcs <- lapply(c(0:max.dp), function(thisdp) {
+                germ.df <- hsnps[dp == thisdp]
+                som.df <- candidates[dp == thisdp]
+                ret <- fcontrol(germ.df=germ.df, som.df=som.df, bins=bins, eps=eps, quiet=quiet)
+                if (!quiet) p()
+                ret
+            })
+            fc.max <- fcontrol(germ.df=hsnps[dp > max.dp],
+                som.df=candidates[dp > max.dp],
+                bins=bins, eps=eps, quiet=quiet)
             if (!quiet) p()
-            ret
-        })
-        #}, future.seed=0)
-        fc.max <- fcontrol(germ.df=hsnps[dp > max.dp],
-                    som.df=candidates[dp > max.dp],
-                    bins=bins, eps=eps, quiet=quiet)
-        if (!quiet) p()
+            fcs <- c(fcs, list(fc.max))
+        } else {
+            # non-legacy mode just parallelizes this step.  same strategy is used.
+            # use a special value of NA to signal the last depth bucket
+            fcs <- future.apply::future_lapply(c(0:max.dp,NA), function(thisdp) {
+                if (is.na(thisdp)) {
+                    germ.df <- hsnps[dp > max.dp]
+                    som.df <- candidates[dp > max.dp]
+                } else {
+                    germ.df <- hsnps[dp == thisdp]
+                    som.df <- candidates[dp == thisdp]
+                }
+                ret <- fcontrol(germ.df=germ.df, som.df=som.df, bins=bins, eps=eps, quiet=quiet)
+                if (!quiet) p()
+                ret
+            }, future.seed=0)
+        }
     }, enable=TRUE)
-    fcs <- c(fcs, list(fc.max))
 
     # randomness done (used only in fcontrol())
     RNGkind(orng[1])
@@ -436,7 +455,8 @@ compute.fdr.prior.data.for.candidates <- function(candidates, hsnps, bins=20, ra
         # partially adjusted N_T/N_A scores for hSNPs.
         eps=eps, b.vec=b.vec, g.tab=g.tab, s.tab=s.tab,
         nt.tab=nt.tab, na.tab=na.tab,
-        ghet.loo.nt.tab=ghet.loo.nt.tab, ghet.loo.na.tab=ghet.loo.na.tab)
+        ghet.loo.nt.tab=ghet.loo.nt.tab, ghet.loo.na.tab=ghet.loo.na.tab,
+        mode=ifelse(legacy, 'legacy', 'new'))
 }
 
 make.nt.tab <- function(prior.data) {
