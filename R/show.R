@@ -12,6 +12,7 @@ setMethod("show", "SCAN2", function(object) {
     cat("#   Genome:", object@genome.string, "\n")
     cat("#   Single cell ID:", object@single.cell, "\n")
     cat("#   Bulk ID:", object@bulk, "\n")
+    cat("#   Sex assigned at birth:", object@sex, "\n")
 
     show.gatk(object)
     show.abmodel(object)
