@@ -102,7 +102,7 @@ genome.string.to.tiling <- function(genome=c('hs37d5', 'hg38', 'mm10'), tilewidt
 
 
 # Tile the genome with `tilewidth` windows, but only retain windows that overlap
-# an analyzed chunk of genome.  The "analyzed chunks of genome" are the `@gatk.regions`
+# an analyzed chunk of genome.  The "analyzed chunks of genome" are the `@analysis.regions`
 # stored in the SCAN2 objects (they are now always parsed from the configuration yaml
 # when making a SCAN2 object).
 # If you have a config.yaml file but no object, just build a dummy SCAN2 object with
@@ -111,7 +111,7 @@ restricted.genome.tiling <- function(object, tilewidth=10e6) {
     sqi <- object@genome.seqinfo
 
     # Always use group='all' - any unused contigs will be automatically discarded when
-    # intersecting against @gatk.regions
+    # intersecting against @analysis.regions
     maximal.set <- genome.string.to.tiling(genome=object@genome.string, tilewidth=tilewidth, group='all')
-    maximal.set[countOverlaps(maximal.set, object@gatk.regions) > 0]
+    maximal.set[countOverlaps(maximal.set, object@analysis.regions) > 0]
 }
