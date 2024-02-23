@@ -17,8 +17,11 @@ integrated.table.meta.cols <- c(
     dbsnp='character',
     refnt='character',
     altnt='character',
-    mq='numeric',
-    mqrs='numeric',
+    # mapping quality and the ranksum test were never used. time to get rid of them.
+    # the standard SCAN2 pipeline only uses reads with MQ>=60 (the max), so these
+    # values were not as interesting as they might be if lower MQ reads were permitted.
+    #mq='numeric',
+    #mqrs='numeric',
     bulk.gt='character',
     bref='integer',
     balt='integer',
@@ -40,6 +43,7 @@ integrated.table.meta.cols <- c(
     sum.out='integer',
     sum.bulk='integer',
     somatic.candidate='logical',
+    training.site='logical',
     resampled.training.site='logical'
 )
 read.integrated.table.1sample <- function(path, sample.id, region=NULL, quiet=FALSE) {
