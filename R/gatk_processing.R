@@ -222,9 +222,13 @@ annotate.gatk.lowmq <- function(gatk, path, bulk, region, quiet=FALSE) {
 
 
 # 'gatk' is a data.table to be modified by reference
-# 'phasing.path' points to a phased VCF output by either SHAPEIT or EAGLE
-# with sample column 'phasedgt'. The VCF file must have a header line
-# beginning with #CHROM, as is usual for the VCF spec.
+#
+# 'phasing.path' points to a SINGLE SAMPLE phased VCF. When produced internally,
+# this is either the output of SHAPEIT or Eagle, but the user can specify a
+# phased VCF directly if desired.
+# 
+# The final line of the VCF header must begin with #CHROM, as is usual for
+# the VCF spec.
 #
 # IMPORTANT: this VCF contains no information about single cells, only bulk.
 #
@@ -245,6 +249,9 @@ annotate.gatk.phasing <- function(gatk, phasing.path, region, quiet=FALSE) {
 
     # phasing.path is a single sample standard VCF, so we specify the column
     # format explicitly.
+    # It doesn't matter what the sample in the phased VCF is named, so long as only
+    # one sample is present.  Internal SCAN2 phasing uses a particular name to avoid
+    # sample name collisions.
     colnames(phase.data) <- c('chr', 'pos', 'dbsnp', 'refnt', 'altnt', 'qual', 'filter', 'info', 'format', 'phasedgt')
 
     # This assumes "GT" is the first element of the GT string format, which isn't
