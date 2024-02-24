@@ -141,7 +141,13 @@ chunked.fread <- function(header, data, nlines.per.chunk=1e6, ...) {
 # (we just don't have any other use cases currently).
 read.tabix.data <- function(path, header, region=NULL, colClasses=NULL, quiet=TRUE, ...)
 {
+    file.ext <- function(x) tail(strsplit(x, split='.', fixed=TRUE)[[1]], 1)
+
     if (missing(header)) {
+        # support binary VCFs (.bcf), which use a .csi index rather than .tbi.
+        # UPDATE: although the tabix command line utility works with .bcf/.csi files,
+        # Rsamtools::TabixFile does not. 
+        #tf <- Rsamtools::TabixFile(path, index=paste(path, ifelse(file.ext(path) == 'bcf', 'csi', 'tbi'), sep='.'))
         tf <- Rsamtools::TabixFile(path)
         open(tf)
         header <- read.tabix.header(tf)
