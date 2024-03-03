@@ -17,11 +17,6 @@ integrated.table.meta.cols <- c(
     dbsnp='character',
     refnt='character',
     altnt='character',
-    # mapping quality and the ranksum test were never used. time to get rid of them.
-    # the standard SCAN2 pipeline only uses reads with MQ>=60 (the max), so these
-    # values were not as interesting as they might be if lower MQ reads were permitted.
-    #mq='numeric',
-    #mqrs='numeric',
     bulk.gt='character',
     bref='integer',
     balt='integer',
@@ -223,14 +218,9 @@ annotate.gatk.lowmq <- function(gatk, path, bulk, region, quiet=FALSE) {
 
 # 'gatk' is a data.table to be modified by reference
 #
-# 'phasing.path' points to a SINGLE SAMPLE phased VCF. When produced internally,
-# this is either the output of SHAPEIT or Eagle, but the user can specify a
-# phased VCF directly if desired.
-# 
-# The final line of the VCF header must begin with #CHROM, as is usual for
-# the VCF spec.
-#
-# IMPORTANT: this VCF contains no information about single cells, only bulk.
+# 'phasing.path' points to a bgzipped, tabix indexed 5 column table with format:
+#       chr, pos, refnt, altnt, phased GT string
+# N.B., the first column name must be "chr"
 #
 # to allow the very simple table join to work well, we assume phasing was
 # restricted to biallelic sites for this individual. while not ideal, the
@@ -240,28 +230,18 @@ annotate.gatk.lowmq <- function(gatk, path, bulk, region, quiet=FALSE) {
 # phase needs to be joined to a single cell table with alt and ref read
 # counts. Based on phase, (alt,ref) maps to either (hap1,hap2) or (hap2,hap1).
 annotate.gatk.phasing <- function(gatk, phasing.path, region, quiet=FALSE) {
-    # VCF column 1 should be named "CHROM"
     phase.data <- read.tabix.data(path=phasing.path, region=region, quiet=quiet,
-        colClasses=list(character='CHROM'))
+        colClasses=list(character='chr'))
 
-    if (ncol(phase.data) != 10)
-        stop('expected single-sample VCF format with 10 columns')
+    if (ncol(phase.data) != 5)
+        stop('expected 5 column table')
 
-    # phasing.path is a single sample standard VCF, so we specify the column
-    # format explicitly.
-    # It doesn't matter what the sample in the phased VCF is named, so long as only
-    # one sample is present.  Internal SCAN2 phasing uses a particular name to avoid
-    # sample name collisions.
-    colnames(phase.data) <- c('chr', 'pos', 'dbsnp', 'refnt', 'altnt', 'qual', 'filter', 'info', 'format', 'phasedgt')
+    colnames(phase.data) <- c('chr', 'pos', 'refnt', 'altnt', 'phasedgt')
 
-    # This assumes "GT" is the first element of the GT string format, which isn't
-    # guaranteed but is the case for our data.
-
-    unrecognized <- setdiff(unique(phase.data$phasedgt), c('1|0', '0|1', './.'))
+    unrecognized <- setdiff(unique(phase.data$phasedgt), c('1|1', '1|0', '0|1', './.'))
     if (length(unrecognized) > 0)
-        stop(paste('phasing genotypes expected to be either 0|1, 1|0 or ./., but found', unrecognized, collapse='\n'))
+        stop(paste('phasing genotypes expected to be either 1|1, 0|1, 1|0 or ./., but found', unique(unrecognized), collapse='\n'))
 
-    # First join the phase genotype (string is either 0|1, 1|0 or ./. if no call)
     gatk[phase.data, on=.(chr,pos,refnt,altnt), phased.gt := i.phasedgt]
 }
 
@@ -365,8 +345,17 @@ annotate.gatk.candidate.loci <- function(gatk, snv.min.bulk.dp, snv.max.bulk.alt
 #      CIGAR op filters (indel ops) is actually incorrect either way.
 # In any case, this likely has a relatively insignificant effect so we are leaving it as
 # it was in legacy calling for now.
-gatk.resample.phased.sites <- function(gatk, M=20, seed=0) {
+gatk.select.and.resample.training.sites <- function(gatk, haploid.chroms, M=20, seed=0) {
     ret <- list()
+
+    # First set the training sites. This does not exactly match legacy SCAN2, which
+    # excluded training sites based on one single cell characteristic (having GT!=./.)
+    gatk[, training.site := !is.na(phased.gt) &
+        # if you aren't a haploid chrom, 0|1 and 1|0 hets are informative, hom 1|1 are not
+        ((!(chr %in% haploid.chroms) & (phased.gt == '0|1' | phased.gt == '1|0')) |
+        # if you are a haploid chrom, 0|1 and 1|0 hets are artifacts and hom 1|1 is informative
+            (chr %in% haploid.chroms & phased.gt == '1|1')) & bulk.gt != './.']
+
     for (mt in c('snv', 'indel')) {
         aux.data <- resample.germline(
             sites=gatk[somatic.candidate == TRUE & muttype == mt],
@@ -383,14 +372,14 @@ gatk.resample.phased.sites <- function(gatk, M=20, seed=0) {
 
     gatk[is.na(resampled.training.site), resampled.training.site := FALSE]
 
-    # reorder columns so that resampled.training.site, applicable to all single
-    # cells in the integrated table, is in the left block of columns. the right block of
+    # reorder columns so that training.site and resampled.training.site, applicable to all single
+    # cells in the integrated table, are in the left block of columns. the right block of
     # columns is intended to only contain per-sample read count data.
     #
     # must use column numbers because column names are not unique: each sample has a 'ref'
     # and 'alt' column.
     n.meta.cols <- length(integrated.table.meta.cols)
-    data.table::setcolorder(gatk, neworder=c(1:(n.meta.cols-1), ncol(gatk), n.meta.cols:(ncol(gatk)-1)))
+    data.table::setcolorder(gatk, neworder=c(1:(n.meta.cols-2), ncol(gatk)-1:0, (n.meta.cols-1):(ncol(gatk)-2)))
 
     return(ret)
 }
