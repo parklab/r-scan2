@@ -161,6 +161,9 @@ run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, training
 #       here because the integrated table represents all cells from an
 #       individual while a SCAN2 object is meant to represent only one
 #       single cell.
+#       The dummy.object, however, MUST have the correct sex so that
+#       training sites can be selected (this only affects haploid sex
+#       chromosomes, where 1|1 phased genotypes are informative)
 #
 # Full GATK annotation pipeline. Creates an annotated integrated table, which
 # contains many site-specific annotations and the full matrix of alt and ref
@@ -190,10 +193,10 @@ make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf,
                     colClasses=list(character='chr'))  # force chromosome column to be type=str
 
                 # Columns in GATK are split as site data | sample-specific count data/genotypes
-                # There are 7 site data columns (chr, pos, dbsnp ID, ref allele, alt allele, mq, mqrs).
+                # There are 5 site data columns (chr, pos, dbsnp ID, ref allele, alt allele).
                 # Try to keep the columns split by site-wide data | sample-specific data
-                sitewide <- gatk[,1:7]
-                samplespecific <- gatk[,-(1:7)]
+                sitewide <- gatk[,1:5]
+                samplespecific <- gatk[,-(1:5)]
 
                 annotate.gatk.counts(gatk.meta=sitewide, gatk=samplespecific,
                     bulk.sample=dummy.object@bulk, sc.samples=names(dummy.object@config$sc_bams),
@@ -237,7 +240,9 @@ make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf,
         RNGkind('Mersenne-Twister')
     }
 
-    resampling.details <- gatk.resample.phased.sites(gatk)
+    # This is only true because we only support human and mouse
+    resampling.details <- gatk.select.and.resample.training.sites(gatk,
+        haploid.chroms=haploid.chroms(dummy.object))
     list(gatk=gatk, resampling.details=resampling.details)
 }
 
