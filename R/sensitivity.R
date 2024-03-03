@@ -167,7 +167,11 @@ model.somatic.sensitivity <- function(tiles, muttype=c('snv', 'indel'), allelety
     # Build model
     set.seed(random.seed)  # I believe glm is not deterministic. Just be safe.
     form <- paste0('cbind(', pstr, ', ', tstr, ' - ', pstr, ') ~ abs(gp.mu) + ',
-        paste(c(bsc, bblk, nbr, 'gp.sd', 'mean.sc.dp'), collapse=" + "))
+        paste(c(bsc, bblk, nbr, 'gp.sd', 'mean.sc.dp', 'I(log10(1+mean.sc.dp))'), collapse=" + "))
+        #paste(c(bsc, bblk, nbr, 'gp.sd', 'mean.sc.dp'), collapse=" + "))
+        # experimental: add log10(depth) to model the negative effect of extreme depth.
+        # reasonable depth values is positively related with sensitivity.
+        # now seems to be better
     model <- glm(form, family=binomial, data=tiles[hold.out == FALSE])
 
     # Predict on the entire data table (INCLUDING training data) and save predictions
