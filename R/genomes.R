@@ -115,3 +115,18 @@ restricted.genome.tiling <- function(object, tilewidth=10e6) {
     maximal.set <- genome.string.to.tiling(genome=object@genome.string, tilewidth=tilewidth, group='all')
     maximal.set[countOverlaps(maximal.set, object@analysis.regions) > 0]
 }
+
+
+haploid.chroms <- function(object) {
+    haploid.chroms <- c()
+    if (object@genome.string == 'hs37d5' | object@genome.string == 'hg38') {
+        if (object@sex == 'male')
+            haploid.chroms <- genome.string.to.chroms(object@genome.string, group='sex')
+    } else if (object@genome.string == 'mm10') {
+        if (object@sex == 'male')
+            haploid.chroms <- genome.string.to.chroms(object@genome.string, group='sex')
+    } else {
+        stop(paste('unsupported genome string', object@genome.string))
+    }
+    return(haploid.chroms)
+}
