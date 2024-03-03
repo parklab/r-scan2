@@ -446,33 +446,36 @@ helper.plot.depth.profile <- function(d, maxdp, keep.zero=FALSE, quantile=0.99) 
 
 setGeneric('plot.sensitivity', function(object, min.tiles=150) standardGeneric('plot.sensitivity'))
 setMethod('plot.sensitivity', 'SCAN2', function(object, min.tiles=150) {
-    helper.plot.sensitivity(
-        maj=assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='maj'),
-        min=assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='min'),
-        min.tiles=min.tiles)
+    layout(t(1:2))
+    for (mt in c('snv', 'indel')) {
+        helper.plot.sensitivity(
+            maj=assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='maj'),
+            min=assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='min'),
+            min.tiles=min.tiles, main=mt)
+    }
 })
 
 setMethod('plot.sensitivity', 'summary.SCAN2', function(object, min.tiles=150) {
-    helper.plot.sensitivity(
-        maj=object@spatial.sensitivity$model.assessment[[paste0(mt, '.maj')]],
-        min=object@spatial.sensitivity$model.assessment[[paste0(mt, '.min')]],
-        min.tiles=min.tiles)
+    layout(t(1:2))
+    for (mt in c('snv', 'indel')) {
+        helper.plot.sensitivity(
+            maj=object@spatial.sensitivity$model.assessment[[paste0(mt, '.maj')]],
+            min=object@spatial.sensitivity$model.assessment[[paste0(mt, '.min')]],
+            min.tiles=min.tiles, main=mt)
+    }
 })
 
 # tilewidth=1kb by default. the het germline SNP rate in humans is about 1/1.5kb. so
 # to get a min. genomic region containing roughly ~100 hSNPs, need 150kb = 150 tiles.
-helper.plot.sensitivity <- function(maj, min, min.tiles=150) {
-    layout(t(1:2))
-    for (mt in c('snv', 'indel')) {
-        maj <- assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='maj')
-        min <- assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='min')
-        plot(maj[n > min.tiles, .(pred, sens)], lwd=2, type='b', pch=20, col=1, main=mt, ylim=0:1,
+helper.plot.sensitivity <- function(maj, min, main, min.tiles=150) {
+        #maj <- assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='maj')
+        #min <- assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='min')
+        plot(maj[n > min.tiles, .(pred, sens)], lwd=2, type='b', pch=20, col=1, main=main, ylim=0:1,
             xlab="Predicted sensitivity based on local covariates",
             ylab='Actual sensitivity for germline het sites')
         lines(min[n > min.tiles, .(pred, sens)], lwd=2, type='b', pch=20, col=2)
         abline(coef=0:1)
         legend('topleft', lwd=2, col=1:2, legend=c("Major allele", 'Minor allele'))
-    }
 }
 
 
