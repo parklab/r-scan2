@@ -1,6 +1,6 @@
-helper.vcf.header <- function(object) {
+helper.vcf.header <- function(object, config=object@config) {
     # read the FASTA index for the reference
-    fai <- read.table(paste0(object@config$ref, '.fai'), sep='\t', stringsAsFactors=F)
+    fai <- read.table(paste0(config$ref, '.fai'), sep='\t', stringsAsFactors=F)
 
     # use call.mutations$target.fdr rather than config$target_fdr since config$target_fdr
     # does not update on calls to, e.g., call.mutations(target.fdr)
@@ -26,7 +26,7 @@ helper.vcf.header <- function(object) {
         sprintf('##SAMPLE=<ID=%s,SampleType=SingleCell,Description="%s">', object@single.cell, "Single cell"),
         sprintf('##SAMPLE=<ID=%s,SampleType=Bulk,Description="%s">', object@bulk, "Matched bulk"),
         sprintf('##PEDIGREE=<ID=%s,Original=%s>', object@single.cell, object@bulk),
-        sprintf('##reference=%s', object@config$ref),
+        sprintf('##reference=%s', config$ref),
         sprintf('##contig=<ID=%s,length=%d>', fai[,1], fai[,2]),
         paste(c("#CHROM", "POS", 'ID', 'REF', 'ALT', 'QUAL', 'FILTER',
             'INFO', 'FORMAT', object@single.cell, object@bulk), collapse='\t')
@@ -37,9 +37,9 @@ helper.vcf.header <- function(object) {
 # Write out a results data frame to out.file
 # set file to NULL to return the VCF data in a data.table rather
 # than writing to file.
-setGeneric("write.vcf", function(object, file, simple.filters=FALSE, overwrite=FALSE)
+setGeneric("write.vcf", function(object, file, simple.filters=FALSE, overwrite=FALSE, config=object@config)
     standardGeneric("write.vcf"))
-setMethod("write.vcf", "SCAN2", function(object, file, simple.filters=FALSE, overwrite=FALSE)
+setMethod("write.vcf", "SCAN2", function(object, file, simple.filters=FALSE, overwrite=FALSE, config=object@config)
 {
     write.file <- !is.null(file)
 
@@ -52,7 +52,7 @@ setMethod("write.vcf", "SCAN2", function(object, file, simple.filters=FALSE, ove
             stop(sprintf("output file %s already exists, please delete it first", file))
         }
     }
-    header <- helper.vcf.header(object)
+    header <- helper.vcf.header(object, config)
     if (write.file) {
         f <- file(file, 'w', raw=file == '/dev/stdout')
         writeLines(header, con=f)
