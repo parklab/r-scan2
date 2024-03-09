@@ -13,15 +13,19 @@ helper.vcf.header <- function(object, config=object@config) {
         '##source=SCAN2',
         sprintf('##FILTER=<ID=%s,Description="%s">', names(filter.descs), filter.descs),
         '##INFO=<ID=DB,Number=0,Type=Flag,Description="dbSNP common variant.">',
+        '##INFO=<ID=MSC,Number=A,Type=String,Description="Mutation signature channel assigned to each allele at this locus">',
+        '##INFO=<ID=BALT_LOWMQ,Number=1,Type=Integer,Description="Number of mutation supporting reads in bulk using a low mapping quality cutoff (=1)">',
+        '##INFO=<ID=TS,Number=0,Type=Flag,Description="Germline heterozygoius variant marked as a training site. N.B. only SNV training sites are used for AB model parameter fitting and AB estimation. Indel training sites are used primarily for sensitivity estimation.">',
         '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype string.">',
         '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allele-specific depth.">',
         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Total depth.">',
-        '##FORMAT=<ID=AF,Number=1,Type=Float,Description="Fraction of reads supporting the variant allele.">',
+        '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Fraction of reads supporting the variant allele.">',
         '##FORMAT=<ID=AB,Number=1,Type=Float,Description="Estimated allele balance at this locus. Not applicable to bulk.">',
-        '##FORMAT=<ID=ABC,Number=1,Type=Float,Description="Allele balance consistency test between this mutation\'s AF and the model-estimated AB. Not applicable to bulk.">',
+        '##FORMAT=<ID=ABC,Number=A,Type=Float,Description="Allele balance consistency test between this mutation\'s AF and the model-estimated AB. Not applicable to bulk.">',
         '##FORMAT=<ID=PAA,Number=1,Type=Float,Description="Pre-amplification artifact score, -log10 scale. Not applicable to bulk.">',
         '##FORMAT=<ID=AA,Number=1,Type=Float,Description="Amplification artifact score, -log10 scale. Not applicable to bulk.">',
         '##FORMAT=<ID=GQ,Number=1,Type=Float,Description="Genotype quality estimated by the worse of the two artifact tests: min(PAA, AA). Not applicable to bulk.">',
+        '##FORMAT=<ID=SC,Number=A,Type=Integer,Description="Allele is a somatic mutation candiate in this cell.">',
         '##META=<ID=SampleType,Type=String,Number=.,Values=[SingleCell,Bulk,Extra]>',
         sprintf('##SAMPLE=<ID=%s,SampleType=SingleCell,Description="%s">', object@single.cell, "Single cell"),
         sprintf('##SAMPLE=<ID=%s,SampleType=Bulk,Description="%s">', object@bulk, "Matched bulk"),
@@ -33,6 +37,20 @@ helper.vcf.header <- function(object, config=object@config) {
     )
     vcf.header
 }
+
+##INFO=<ID=DB,Number=0,Type=Flag,Description="dbSNP common variant.">',
+##INFO=<ID=MSC,Number=A,Type=String,Description="Mutation signature channel assigned to each allele at this locus">',
+##INFO=<ID=BALT_LOWMQ,Number=1,Type=Integer,Description="Number of mutation supporting reads in bulk using a low mapping quality cutoff (=1)">',
+##INFO=<ID=TS,Number=0,Type=Flag,Description="Germline heterozygoius variant marked as a training site. N.B. only SNV training sites are used for AB model parameter fitting and AB estimation. Indel training sites are used primarily for sensitivity estimation.">',
+helper.build.info.string <- function(gatk) {
+    info <- sprintf("MSC=%s;BALT_LOWMQ=%s",
+        ifelse(is.na(gatk$mutsig), '.', gatk$mutsig),
+        ifelse(is.na(gatk$balt.lowmq), '.', as.character(gatk$balt.lowmq)))
+    info <- paste0(info, ifelse(gatk$dbsnp == '.', '', ';DB'))
+    info <- paste0(info, ifelse(gatk$training.site, ';TS', ''))
+    info
+}
+
 
 # Write out a results data frame to out.file
 # set file to NULL to return the VCF data in a data.table rather
@@ -70,22 +88,23 @@ setMethod("write.vcf", "SCAN2", function(object, file, simple.filters=FALSE, ove
         filter=compute.filter.reasons(object@gatk,
             target.fdr=object@call.mutations$target.fdr,
             simple.filters=simple.filters),
-        info=ifelse(dbsnp=='.', '', 'DB'),
-        format='GT:DP:AD:AF:AB:ABC:PAA:AA:GQ',
-        sc=sprintf("%s:%d:%d,%d:%s:%s:%s:%s:%s:%s",
-            ifelse(pass | rescue.col, '0/1', './.'),
+        info=helper.build.info.string(object@gatk),
+        format='GT:DP:AD:AF:AB:ABC:PAA:AA:GQ:SC',
+        sc=sprintf("%s:%d:%d,%d:%s:%s:%s:%s:%s:%s:%d",
+            ifelse((!is.na(pass) & pass) | (!is.na(rescue.col) & rescue.col), '0/1', './.'),
             dp, scref, scalt,
-            ifelse(is.na(af), '.', sprintf("%0.5f", af)),
-            ifelse(is.na(ab), '.', sprintf("%0.5f", ab)),
-            ifelse(is.na(abc.pv), '.', sprintf('%0.5f', -log10(abc.pv))),
-            ifelse(is.na(lysis.fdr), '.', sprintf('%0.5f', -log10(lysis.fdr))),
-            ifelse(is.na(mda.fdr), '.', sprintf('%0.5f', -log10(mda.fdr))),
+            ifelse(is.na(af), '.', sprintf("%0.4f", af)),
+            ifelse(is.na(ab), '.', sprintf("%0.4f", ab)),
+            ifelse(is.na(abc.pv), '.', sprintf('%0.4f', -log10(abc.pv))),
+            ifelse(is.na(lysis.fdr), '.', sprintf('%0.4f', -log10(lysis.fdr))),
+            ifelse(is.na(mda.fdr), '.', sprintf('%0.4f', -log10(mda.fdr))),
             ifelse(is.na(mda.fdr) | is.na(lysis.fdr), '.',
-                sprintf('%0.5f', pmin(-log10(lysis.fdr),-log10(mda.fdr))))),
-        bulk=sprintf("%s:%d:%d,%d:%s:.:.:.:.:.",
+                sprintf('%0.4f', pmin(-log10(lysis.fdr),-log10(mda.fdr)))),
+            1*somatic.candidate),
+        bulk=sprintf("%s:%d:%d,%d:%s:.:.:.:.:.:.",
             ifelse(is.na(phased.gt), bulk.gt, phased.gt),
             bulk.dp, bref, balt,
-            ifelse(is.na(bulk.af), '.', sprintf('%0.5f', bulk.af)))
+            ifelse(is.na(bulk.af), '.', sprintf('%0.4f', bulk.af)))
     )][order(chr,pos)]
 
     if (!write.file)
