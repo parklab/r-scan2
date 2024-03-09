@@ -40,7 +40,7 @@ compute.filter.reasons <- function(gatk, target.fdr, simple.filters=FALSE, retur
         max.bulk.alt='Excessive mutation supporting reads (--{snv,indel}-max-bulk-alt) in bulk',
         max.bulk.af='Excessive VAF (--{snv,indel}-max-bulk-af) in bulk',
         max.bulk.binom.prob='Probability of heterozygote too high (--{snv,indel}-max-bulk-binom.prob) in bulk',
-        cross.sample.filter='Recurrent artifact in cross-sample panel.',
+        cross.sample.filter='Recurrent artifact observed too frequently in cross-sample panel (--cross-sample-panel). Currently, only indels are are filtered against the panel.',
         dbsnp='Present in dbSNP, likely germline variant missed by bulk.')
 
     if (return.filter.descriptions)
@@ -54,10 +54,11 @@ compute.filter.reasons <- function(gatk, target.fdr, simple.filters=FALSE, retur
 
         filter.reasons <- ifelse(!is.na(gatk$pass) & gatk$pass, 'PASS',
             ifelse(!is.na(rescue) & rescue, 'RESCUE',
-                ifelse(gatk$static.filter == FALSE, 'hard.filters', 
-                    ifelse(is.na(gatk$lysis.fdr) | gatk$lysis.fdr > target.fdr, 'pre.amplification.artifact',
-                        ifelse(!is.na(gatk$mda.fdr) | gatk$mda.fdr > target.fdr, 'amplification.artifact',
-                            ifelse(!is.na(gatk$abc.test) & gatk$abc.test == 'FALSE', 'abc', '.'))))))
+                ifelse(is.na(gatk$csf.test) | gatk$csf.test == FALSE, 'cross.sample.filter', 
+                    ifelse(is.na(gatk$static.filter) | gatk$static.filter == FALSE, 'hard.filters', 
+                        ifelse(is.na(gatk$lysis.fdr) | gatk$lysis.fdr > target.fdr, 'pre.amplification.artifact',
+                            ifelse(!is.na(gatk$mda.fdr) | gatk$mda.fdr > target.fdr, 'amplification.artifact',
+                                ifelse(!is.na(gatk$abc.test) & gatk$abc.test == 'FALSE', 'abc', '.')))))))
     } else {
         # The full filter string is extremely slow to compute and requires a
         # suprising amount of RAM: ~10min.
@@ -87,7 +88,7 @@ compute.filter.reasons <- function(gatk, target.fdr, simple.filters=FALSE, retur
 
         # This is excruciatingly slow. ~10 minutes for a complete GATK table
         filter.reasons <-
-            apply(m, 1, function(row) paste(row[nzchar(row)], collapse=','))
+            apply(m, 1, function(row) paste(row[nzchar(row)], collapse=';'))
     }
 
     filter.reasons
