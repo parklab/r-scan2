@@ -42,6 +42,11 @@ setGeneric("write.vcf", function(object, file, simple.filters=FALSE, overwrite=F
 setMethod("write.vcf", "SCAN2", function(object, file, simple.filters=FALSE, overwrite=FALSE)
 {
     write.file <- !is.null(file)
+
+    # convenience for writing to stdout
+    if (file == '/dev/stdout')
+        overwrite <- TRUE
+
     if (write.file & !overwrite) {
         if (file.exists(file)) {
             stop(sprintf("output file %s already exists, please delete it first", file))
@@ -49,8 +54,7 @@ setMethod("write.vcf", "SCAN2", function(object, file, simple.filters=FALSE, ove
     }
     header <- helper.vcf.header(object)
     if (write.file) {
-        f <- file(file, 'w')
-        cat("writing to", file, "..\n")
+        f <- file(file, 'w', raw=file == '/dev/stdout')
         writeLines(header, con=f)
     }
 
@@ -58,7 +62,6 @@ setMethod("write.vcf", "SCAN2", function(object, file, simple.filters=FALSE, ove
     if ('rescue' %in% colnames(object@gatk))
         rescue.col <- object@gatk$rescue
 
-    cat('computing filter strings..\n')
     contigs <- seqnames(genome.string.to.bsgenome.object(object@genome.string))
     s <- object@gatk[,.(
         # factorize chromosome so that it can be sorted to match contig list
