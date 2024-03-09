@@ -670,9 +670,15 @@ setMethod("compute.static.filters", "SCAN2", function(object, mode=c('new', 'leg
 # reading is handled by read.integrated.table.1sample().
 #
 # Next, annotate the integrated table with information corresponding to
-# `sample.id`. This includes training site definitions (which varies from cell
+# `sample.id`. Currently, only computes af, dp and assigns and assigns single cell
+# ref/alt read counts to phased haplotypes.
+#
+# NO LONGER: includes training site definitions (which varies from cell
 # to cell depending on whether there is no data at the site in that single cell;
-# gt=./.) and assigning single cell ref/alt read counts to phased haplotypes.
+# gt=./.). This is now done in the integrated table because that's where training
+# site resampling occurs, so training sites must clearly be decided before that.
+# Resampling should occur at the integrated table stage so that a consistent set
+# of resampled training sites is used for all samples.
 #
 # N.B. parsimony phasing (adjust.phase()) used to be called here, but that is not
 # a good idea. That should happen in the make.integrated.table pipeline where the
@@ -689,8 +695,8 @@ read.and.annotate.integrated.table <- function(path, sample.id, region=NULL, qui
     data.table::setkey(tr, chr, pos, refnt, altnt)
     setindex(tr, muttype) # allow for fast selection of SNVs or indels
 
-    sc.gt <- tr[[sample.id]]  # the column named after the sample is the GATK GT string for that sample
-    tr[, training.site := (!is.na(phased.gt) & (phased.gt == '1|0' | phased.gt == '0|1')) & sc.gt != './.' & bulk.gt != './.']
+    #sc.gt <- tr[[sample.id]]  # the column named after the sample is the GATK GT string for that sample
+    #tr[, training.site := (!is.na(phased.gt) & (phased.gt == '1|0' | phased.gt == '0|1')) & sc.gt != './.' & bulk.gt != './.']
     tr[, c('phased.hap1', 'phased.hap2') :=
         list(ifelse(phased.gt == '0|1', scref, scalt),
              ifelse(phased.gt == '0|1', scalt, scref))]
@@ -720,8 +726,10 @@ read.training.hsnps <- function(path, sample.id, region=NULL, quiet=FALSE) {
 # mode=legacy is not computationally feasible.
 setGeneric("call.mutations", function(object, target.fdr=0.01, quiet=FALSE)
         standardGeneric("call.mutations"))
-setMethod("call.mutations", "SCAN2", function(object, target.fdr=0.01, quiet=FALSE) {
-    check.slots(object, c('gatk', 'static.filter.params', 'mut.models', 'excess.cigar.scores', 'fdr.prior.data', 'fdr'))
+setMethod("call.mutations", "SCAN2", function(object, target.fdr=0.01, quiet=FALSE)
+{
+    check.slots(object, c('gatk', 'static.filter.params', 'mut.models',
+                          'excess.cigar.scores', 'fdr.prior.data', 'fdr'))
 
     # Try to handle indel calling when the cross-sample filter does not meet
     # the usual requirements (>1 unique individual).
