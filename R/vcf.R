@@ -1,90 +1,96 @@
-# ALL DEAD CODE --- keeping around for possible later use to generate VCF files, which users tend to want.
+helper.vcf.header <- function(object) {
+    # read the FASTA index for the reference
+    fai <- read.table(paste0(object@config$ref, '.fai'), sep='\t', stringsAsFactors=F)
 
-
-# Create VCF output for a single sample called by SCAN-SNV
-# output.fmt may contain a single '%s' which will be replaced by
-# the sample name.
-scansnv.to.vcf <- function(ss.dir, output.fmt, type='somatic', muttype='snv', overwrite=FALSE) {
-    if (!(type %in% c('somatic', 'mosaic', 'hsnp_spikein')))
-        stop(sprintf("type must be either somatic, mosaic or hsnp_spikein, not '%s'", type))
-
-    if (!(muttype %in% c('snv', 'indel')))
-        stop(spritnf("muttype must be either 'snv' or 'indel', not %s", muttype))
-
-    ss.config <- file.path(ss.dir, "scan.yaml")
-    if (!file.exists(ss.config))
-        stop(sprintf("expected SCAN-SNV config file does not exist: %s\n",
-            ss.config))
-
-    yaml <- yaml::read_yaml(ss.config)
-    sc.samples <- names(yaml$sc_bams)
-    for (s in sc.samples) {
-        path.fmt <- "%s_genotypes.rda"
-        if (muttype == 'indel' & type == 'somatic')
-            path.fmt <- "%s_genotypes.pon_filter.rda"
-        f <- file.path(ss.dir, muttype, s, sprintf(path.fmt, type))
-        print(f)
-        load(f)
-        # we assume the loaded variable is called 'somatic' below
-        # but the mosaic results are called 'mosaic'.
-        # just stick it in a variable named somatic anyway. it doesn't matter.
-        somatic <- get(ifelse(type == 'hsnp_spikein', 'spikeins', type))
-
-        out.file <- sprintf(output.fmt, s)
-        scansnv.df.to.vcf(df=somatic, out.file=out.file, yaml=yaml,
-            sample.name=s, overwrite=overwrite)
-    }
+    # use call.mutations$target.fdr rather than config$target_fdr since config$target_fdr
+    # does not update on calls to, e.g., call.mutations(target.fdr)
+    filter.descs <- compute.filter.reasons(object@gatk,
+        target.fdr=object@call.mutations$target.fdr,
+        return.filter.descriptions=TRUE)
+    vcf.header <- c(
+        '##fileformat=VCFv4.4',
+        paste0('##fileDate=', Sys.Date()),
+        '##source=SCAN2',
+        sprintf('##FILTER=<ID=%s,Description="%s">', names(filter.descs), filter.descs),
+        '##INFO=<ID=DB,Number=0,Type=Flag,Description="dbSNP common variant.">',
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype string.">',
+        '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allele-specific depth.">',
+        '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Total depth.">',
+        '##FORMAT=<ID=AF,Number=1,Type=Float,Description="Fraction of reads supporting the variant allele.">',
+        '##FORMAT=<ID=AB,Number=1,Type=Float,Description="Estimated allele balance at this locus. Not applicable to bulk.">',
+        '##FORMAT=<ID=ABC,Number=1,Type=Float,Description="Allele balance consistency test between this mutation\'s AF and the model-estimated AB. Not applicable to bulk.">',
+        '##FORMAT=<ID=PAA,Number=1,Type=Float,Description="Pre-amplification artifact score, -log10 scale. Not applicable to bulk.">',
+        '##FORMAT=<ID=AA,Number=1,Type=Float,Description="Amplification artifact score, -log10 scale. Not applicable to bulk.">',
+        '##FORMAT=<ID=GQ,Number=1,Type=Float,Description="Genotype quality estimated by the worse of the two artifact tests: min(PAA, AA). Not applicable to bulk.">',
+        '##META=<ID=SampleType,Type=String,Number=.,Values=[SingleCell,Bulk,Extra]>',
+        sprintf('##SAMPLE=<ID=%s,SampleType=SingleCell,Description="%s">', object@single.cell, "Single cell"),
+        sprintf('##SAMPLE=<ID=%s,SampleType=Bulk,Description="%s">', object@bulk, "Matched bulk"),
+        sprintf('##PEDIGREE=<ID=%s,Original=%s>', object@single.cell, object@bulk),
+        sprintf('##reference=%s', object@config$ref),
+        sprintf('##contig=<ID=%s,length=%d>', fai[,1], fai[,2]),
+        paste(c("#CHROM", "POS", 'ID', 'REF', 'ALT', 'QUAL', 'FILTER',
+            'INFO', 'FORMAT', object@single.cell, object@bulk), collapse='\t')
+    )
+    vcf.header
 }
-
-
 
 # Write out a results data frame to out.file
-scansnv.df.to.vcf <- function(df, out.file, ss.config, yaml, sample.name,
-    overwrite=FALSE, chrs=c(1:22, 'X', 'Y')) {
-    if (!missing(yaml) & !missing(ss.config))
-        stop('only one of "ss.config" or "yaml" can be specified')
-
-    if (!missing(ss.config))
-        yaml <- yaml::read_yaml(ss.config)
-
-    if (!missing(yaml) | !missing(ss.config)) {
-        ref.genome <- yaml$ref
-        if (missing(chrs))
-            chrs <- yaml$chrs
-        # read the FASTA index for the reference
-        fai <- read.table(paste0(ref.genome, '.fai'), sep='\t',
-            stringsAsFactors=F)
+# set file to NULL to return the VCF data in a data.table rather
+# than writing to file.
+setGeneric("write.vcf", function(object, file, simple.filters=FALSE, overwrite=FALSE)
+    standardGeneric("write.vcf"))
+setMethod("write.vcf", "SCAN2", function(object, file, simple.filters=FALSE, overwrite=FALSE)
+{
+    write.file <- !is.null(file)
+    if (write.file & !overwrite) {
+        if (file.exists(file)) {
+            stop(sprintf("output file %s already exists, please delete it first", file))
+        }
+    }
+    header <- helper.vcf.header(object)
+    if (write.file) {
+        f <- file(file, 'w')
+        cat("writing to", file, "..\n")
+        writeLines(header, con=f)
     }
 
-    if (!overwrite & file.exists(out.file))
-        stop(sprintf("output file %s already exists, please delete it first",
-            out.file))
-    f <- file(out.file, 'w')
-    cat(sprintf("writing to %s..\n", out.file))
+    rescue.col <- rep(FALSE, nrow(object@gatk))
+    if ('rescue' %in% colnames(object@gatk))
+        rescue.col <- object@gatk$rescue
 
-    vcf.header <- c(
-        '##fileformat=VCFv4.0',
-        '##source=SCAN2',
-        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
-    if (!missing(ss.config) | !missing(yaml))
-        vcf.header <- c(vcf.header, 
-            sprintf('##reference=%s', yaml$ref),
-            sprintf('##contig=<ID=%s,length=%d>', fai[,1], fai[,2]))
-    vcf.header <- c(vcf.header,
-            paste(c("#CHROM", "POS", 'ID', 'REF', 'ALT', 'QUAL', 'FILTER',
-                'INFO', 'FORMAT', sample.name), collapse='\t'))
+    cat('computing filter strings..\n')
+    contigs <- seqnames(genome.string.to.bsgenome.object(object@genome.string))
+    s <- object@gatk[,.(
+        # factorize chromosome so that it can be sorted to match contig list
+        chr=factor(chr, levels=contigs, ordered=TRUE),
+        pos, dbsnp, refnt, altnt, qual='.',
+        filter=compute.filter.reasons(object@gatk,
+            target.fdr=object@call.mutations$target.fdr,
+            simple.filters=simple.filters),
+        info=ifelse(dbsnp=='.', '', 'DB'),
+        format='GT:DP:AD:AF:AB:ABC:PAA:AA:GQ',
+        sc=sprintf("%s:%d:%d,%d:%s:%s:%s:%s:%s:%s",
+            ifelse(pass | rescue.col, '0/1', './.'),
+            dp, scref, scalt,
+            ifelse(is.na(af), '.', sprintf("%0.5f", af)),
+            ifelse(is.na(ab), '.', sprintf("%0.5f", ab)),
+            ifelse(is.na(abc.pv), '.', sprintf('%0.5f', -log10(abc.pv))),
+            ifelse(is.na(lysis.fdr), '.', sprintf('%0.5f', -log10(lysis.fdr))),
+            ifelse(is.na(mda.fdr), '.', sprintf('%0.5f', -log10(mda.fdr))),
+            ifelse(is.na(mda.fdr) | is.na(lysis.fdr), '.',
+                sprintf('%0.5f', pmin(-log10(lysis.fdr),-log10(mda.fdr))))),
+        bulk=sprintf("%s:%d:%d,%d:%s:.:.:.:.:.",
+            ifelse(is.na(phased.gt), bulk.gt, phased.gt),
+            bulk.dp, bref, balt,
+            ifelse(is.na(bulk.af), '.', sprintf('%0.5f', bulk.af)))
+    )][order(chr,pos)]
 
-    writeLines(vcf.header, con=f)
-    s <- df[!is.na(df$pass) & !is.na(df$chr) & df$pass,]
-    s <- do.call(rbind, lapply(chrs, function(chr) {
-        ss <- s[s$chr==chr,]
-        ss[order(ss$pos),]
-    }))
+    if (!write.file)
+        return(s)
+ 
     if (nrow(s) > 0) {
-        writeLines(paste(s$chr, s$pos, s$dbsnp, s$refnt, s$altnt,
-            '.', 'PASS', '.', 'GT', '0/1', sep='\t'),
-            con=f)
+        writeLines(s[,paste(chr,pos,dbsnp,refnt,altnt,qual,filter,info,format,sc,bulk,sep='\t')], con=f)
     }
     close(f)
-}
+})
 
