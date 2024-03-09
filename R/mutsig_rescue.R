@@ -12,32 +12,85 @@ get.high.quality.mutations <- function(gatk, muttype=c('snv', 'indel')) {
 # pass normally if target.fdr=0.5 (i.e., 50% false discovery rate, which
 # is very high; recommended target.fdr is 0.01 (1%)).
 reduce.table <- function(gatk, target.fdr) {
-    compute.filter.reasons(gatk[static.filter & lysis.fdr <= 0.5 & mda.fdr <= 0.5], target.fdr=target.fdr)
+    compute.filter.reasons(gatk[static.filter & lysis.fdr <= 0.5 & mda.fdr <= 0.5], target.fdr=target.fdr, simple.filters=FALSE)
 }
 
 
-# Modifies 'o' by reference. The returned o is not a particularly valid
-# SCAN2 object.
+# Modifies 'gatk' by reference.
 #
 # N.B. there are currently no reasons to separate SNVs and indels here
 # because the various test columns already incoporate differences in
 # calling parameters.
-compute.filter.reasons <- function(gatk, target.fdr=o@call.mutations$target.fdr) {
-    m <- gatk[, .(pass=!pass, abc.test,
-        lysis.test=!is.na(lysis.fdr) & lysis.fdr <= target.fdr,
-        mda.test=!is.na(mda.fdr) & mda.fdr <= target.fdr,
-        cigar.id.test, cigar.hs.test,
-        lowmq.test, dp.test, min.sc.alt.test,
-        csf.test, dbsnp.test)]
+#
+# simple.filters - 100-fold faster than full filters. Notably, simple.filters
+#   selects just one arbitrary filter when many might apply.
+compute.filter.reasons <- function(gatk, target.fdr, simple.filters=FALSE, return.filter.descriptions=FALSE) {
+    filter.descriptions <- c(
+        PASS='VAF-based passing call (i.e., no mutation signature information was used)',
+        RESCUE='A passing mutation call, but detected using mutation signature-based rescue. These mutation calls may be biased for particular signatures and should be handled appropriately.',
+        abc='Allele balance consistency test.',
+        pre.amplification.artifact='Consistent with the expected VAF of an artifact in DNA prior to amplification (AF/2).',
+        amplification.artifact='Consistent with the expected VAF of an artifact in the first round of amplification (AF/4).',
+        hard.filters='Unspecified hard filter, only used when simple.filters=TRUE.',
+        cigar.id='Excessive CIGAR I/D operations compared to bulk.',
+        cigar.hs='Excessive CIGAR S/H operations compared to bulk.',
+        bulk.lowmq='Low mapping quality mutation supporting reads detected in bulk.',
+        min.dp='Insufficient sequencing depth (--{snv,indel}-min-sc-dp) in single cell.',
+        min.sc.alt='Insufficient mutation supporting reads (--{snv,indel}-min-sc-alt) in single cell.',
+        max.bulk.alt='Excessive mutation supporting reads (--{snv,indel}-max-bulk-alt) in bulk',
+        max.bulk.af='Excessive VAF (--{snv,indel}-max-bulk-af) in bulk',
+        max.bulk.binom.prob='Probability of heterozygote too high (--{snv,indel}-max-bulk-binom.prob) in bulk',
+        cross.sample.filter='Recurrent artifact in cross-sample panel.',
+        dbsnp='Present in dbSNP, likely germline variant missed by bulk.')
 
-    # some tests can be NA - e.g., many tests when dp=0, cross-sample filter test when
-    # the site is not in the panel, etc.  these tests should be considered to
-    # have failed when NA.
-    m[is.na(m)] <- FALSE
+    if (return.filter.descriptions)
+        return(filter.descriptions)
 
-    # don't overlook the negation apply(!m, ...
-    gatk[, filter.reasons :=
-        apply(!m, 1, function(row) paste(colnames(m)[row], collapse='&'))]
+    if (simple.filters) {
+        # Only if rescue has been run
+        rescue <- rep(FALSE, nrow(gatk))
+        if ('rescue' %in% colnames(gatk))
+            rescue <- gatk$rescue
+
+        filter.reasons <- ifelse(gatk$pass, 'PASS',
+            ifelse(rescue, 'RESCUE',
+                ifelse(gatk$static.filter == FALSE, 'hard.filters', 
+                    ifelse(is.na(gatk$lysis.fdr) | gatk$lysis.fdr > target.fdr, 'pre.amplification.artifact',
+                        ifelse(!is.na(gatk$mda.fdr) | gatk$mda.fdr > target.fdr, 'amplification.artifact',
+                            ifelse(gatk$abc.test == 'FALSE', 'abc', '.'))))))
+    } else {
+        # The full filter string is extremely slow to compute and requires a
+        # suprising amount of RAM: ~10min.
+        m <- gatk[, .(PASS=ifelse(pass, 'PASS', ''),
+            pre.amplification.artifact=ifelse(!is.na(lysis.fdr) & lysis.fdr <= target.fdr, '', 'pre.amplification.artifact'),
+            amplification.artifact=ifelse(!is.na(mda.fdr) & mda.fdr <= target.fdr, '', 'amplification.artifact'),
+            abc=ifelse(abc.test, '', 'abc'),
+            cigar.id=ifelse(cigar.id.test, '', 'cigar.id'),
+            cigar.hs=ifelse(cigar.hs.test, '', 'cigar.hs'),
+            bulk.lowmq=ifelse(lowmq.test, '', 'bulk.lowmq'),
+            min.dp=ifelse(dp.test, '', 'min.dp'),
+            min.sc.alt=ifelse(min.sc.alt.test, '', 'min.sc.alt'),
+            max.bulk.alt=ifelse(max.bulk.alt.test, '', 'max.bulk.alt'),
+            max.bulk.af=ifelse(max.bulk.af.test, '', 'max.bulk.af'),
+            max.bulk.binom.prob=ifelse(max.bulk.binom.prob.test, '', 'max.bulk.binom.prob'),
+            cross.sample.filter=ifelse(csf.test, '', 'cross.sample.filter'),
+            dbsnp=ifelse(dbsnp.test, '', 'dbsnp'))]
+
+        # Only if rescue has been run
+        if ('rescue' %in% colnames(gatk))
+            m$RESCUE <- ifelse(gatk$rescue, 'RESCUE', '')
+
+        # some tests can be NA - e.g., many tests when dp=0, cross-sample filter test when
+        # the site is not in the panel, etc.  these tests should be considered to
+        # have failed when NA.
+        m[is.na(m)] <- TRUE
+
+        # This is excruciatingly slow. ~10 minutes for a complete GATK table
+        filter.reasons <-
+            apply(m, 1, function(row) paste(row[nzchar(row)], collapse=','))
+    }
+
+    filter.reasons
 }
 
 
@@ -52,7 +105,7 @@ mutsig.rescue.one <- function(object, artifact.sig, true.sig,
     tmpgatk <- copy(reduce.table(object@gatk, target.fdr=target.fdr))
 
     sigtype <- if (mt == 'snv') sbs96 else id83
-    mutsigs <- sigtype(tmpgatk[muttype == mt & filter.reasons == 'lysis.test']$mutsig)
+    mutsigs <- sigtype(tmpgatk[muttype == mt & filter.reasons == 'pre.amplification.artifact']$mutsig)
 
     sigscores <- get.sig.score(mutsigs=mutsigs,
         artifact.sig=artifact.sig, true.sig=true.sig)
@@ -60,14 +113,14 @@ mutsig.rescue.one <- function(object, artifact.sig, true.sig,
     # it doesn't seem to be possible to use a column assigned by := for another
     # assignment in the same data.table statement.  i.e., to combine all of these
     # into a single statement.
-    tmpgatk[muttype == mt & filter.reasons == 'lysis.test',
+    tmpgatk[muttype == mt & filter.reasons == 'pre.amplification.artifact',
         rweight := as.numeric(10^-sigscores$postp[mutsig])]  # as.numeric: get rid of table class
-    tmpgatk[muttype == mt & filter.reasons == 'lysis.test', rescue.fdr := 
+    tmpgatk[muttype == mt & filter.reasons == 'pre.amplification.artifact', rescue.fdr := 
         lysis.pv / (lysis.pv + lysis.beta * rweight * nt/na)]
 
     # rescue refers uniquely to rescued sites, even though regularly PASSed sites
     # would also meet these criteria.
-    tmpgatk[muttype == mt & filter.reasons == 'lysis.test', rescue := 
+    tmpgatk[muttype == mt & filter.reasons == 'pre.amplification.artifact', rescue := 
         !pass & rescue.fdr <= rescue.target.fdr]
     data.table::setkey(tmpgatk, chr, pos, refnt, altnt)  # probably should already be this way
 
