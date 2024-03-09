@@ -52,12 +52,12 @@ compute.filter.reasons <- function(gatk, target.fdr, simple.filters=FALSE, retur
         if ('rescue' %in% colnames(gatk))
             rescue <- gatk$rescue
 
-        filter.reasons <- ifelse(gatk$pass, 'PASS',
-            ifelse(rescue, 'RESCUE',
+        filter.reasons <- ifelse(!is.na(gatk$pass) & gatk$pass, 'PASS',
+            ifelse(!is.na(rescue) & rescue, 'RESCUE',
                 ifelse(gatk$static.filter == FALSE, 'hard.filters', 
                     ifelse(is.na(gatk$lysis.fdr) | gatk$lysis.fdr > target.fdr, 'pre.amplification.artifact',
                         ifelse(!is.na(gatk$mda.fdr) | gatk$mda.fdr > target.fdr, 'amplification.artifact',
-                            ifelse(gatk$abc.test == 'FALSE', 'abc', '.'))))))
+                            ifelse(!is.na(gatk$abc.test) & gatk$abc.test == 'FALSE', 'abc', '.'))))))
     } else {
         # The full filter string is extremely slow to compute and requires a
         # suprising amount of RAM: ~10min.
