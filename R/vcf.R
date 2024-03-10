@@ -10,7 +10,9 @@ helper.vcf.header <- function(object, config=object@config) {
     vcf.header <- c(
         '##fileformat=VCFv4.4',
         paste0('##fileDate=', Sys.Date()),
-        '##source=SCAN2',
+        '##source=r-scan2',
+        paste('##r-scan2_version_for_analysis=', object@package.version),
+        paste('##r-scan2_version_for_vcf=', get.rscan2.version()),
         sprintf('##FILTER=<ID=%s,Description="%s">', names(filter.descs), filter.descs),
         '##INFO=<ID=DB,Number=0,Type=Flag,Description="dbSNP common variant.">',
         '##INFO=<ID=MSC,Number=A,Type=String,Description="Mutation signature channel assigned to each allele at this locus">',
@@ -98,6 +100,7 @@ setMethod("write.vcf", "SCAN2", function(object, file, simple.filters=FALSE, ove
             ifelse(is.na(mda.fdr), '.', sprintf('%0.4f', -log10(mda.fdr))),
             ifelse(is.na(mda.fdr) | is.na(lysis.fdr), '.',
                 sprintf('%0.4f', pmin(-log10(lysis.fdr),-log10(mda.fdr)))),
+            #ifelse(somatic.candidate, 1, 0)),
             1*somatic.candidate),
         bulk=sprintf("%s:%d:%d,%d:%s:.:.:.:.:.:.",
             ifelse(is.na(phased.gt), bulk.gt, phased.gt),
