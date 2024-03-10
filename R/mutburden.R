@@ -25,7 +25,8 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
             germline=object@gatk[chr %in% autosome.names & resampled.training.site == TRUE & muttype == mt],
             somatic=object@gatk[chr %in% autosome.names & pass == TRUE & muttype == mt],
             sfp=object@static.filter.params[[mt]],
-            dptab=object@depth.profile$dptab)
+            dptab=object@depth.profile$dptab,
+            gbp.per.genome=gbp.per.genome)
 
         # sex chromosome burden
         ret.sex <- compute.mutburden.helper(
@@ -82,7 +83,7 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
 # and somatic mutations are equally affected by the min depth reqs. So if
 # parts of the middle 50% are excluded by min depth reqs, this will be
 # reflected in the sensitivity estimates.
-compute.mutburden.helper <- function(germline, somatic, sfp, dptab) {
+compute.mutburden.helper <- function(germline, somatic, sfp, dptab, gbp.per.genome) {
     reason <- ''
 
     # these computations rely on there being a reasonably large number
