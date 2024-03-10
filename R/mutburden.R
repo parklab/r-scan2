@@ -149,7 +149,6 @@ compute.mutburden.helper <- function(germline, somatic, sfp, dptab, gbp.per.geno
     ret$rate.per.gb <- ret$callable.burden / ret$callable.bp * 1e9/2
     ret$burden <- ret$rate.per.gb * gbp.per.genome
     ret$somatic.sens <- ret$ncalls / ret$burden
-    ret$pre.genotyping.burden <- pre.geno.burden
 
     ret$unsupported.filters <- sfp$max.bulk.alt > 0 |
         # these filters are set to 1 by default, which means they do nothing and
