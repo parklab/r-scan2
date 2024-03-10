@@ -33,7 +33,8 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
             germline=object@gatk[chr %in% sex.chrom.names & resampled.training.site == TRUE & muttype == mt],
             somatic=object@gatk[chr %in% sex.chrom.names & pass == TRUE & muttype == mt],
             sfp=object@static.filter.params[[mt]],
-            dptab=object@depth.profile$dptab.sex)
+            dptab=object@depth.profile$dptab.sex,
+            gbp.per.genome=gbp.per.genome)
 
         # Add the estimate based only on comparing VAF distns of germline
         # sites and candidate somatics for comparison.  This estimate is often
