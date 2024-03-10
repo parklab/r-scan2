@@ -1,5 +1,6 @@
 setMethod("show", "SCAN2", function(object) {
     cat("#", is(object)[[1]], "\n")
+    cat("# r-scan2 package version:", object@package.version, "\n")
     if (!is.null(object@region)) {
         cat("#   Region:")
         if (length(object@region) > 1) {
