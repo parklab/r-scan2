@@ -84,7 +84,7 @@ compute.filter.reasons <- function(gatk, target.fdr, simple.filters=FALSE, retur
         # some tests can be NA - e.g., many tests when dp=0, cross-sample filter test when
         # the site is not in the panel, etc.  these tests should be considered to
         # have failed when NA.
-        m[is.na(m)] <- TRUE
+        m[is.na(m)] <- ''
 
         # This is excruciatingly slow. ~10 minutes for a complete GATK table
         filter.reasons <-
