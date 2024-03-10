@@ -89,7 +89,7 @@ compute.mutburden.helper <- function(germline, somatic, sfp, dptab) {
     # of germline sites tested. even 100 is very few; we expect more like
     # 100,000.
     if (nrow(germline) < 100) {
-        warning(paste('only', nrow(g), 'resampled germline sites were detected; aborting genome-wide extrapolation. Typical whole-genome experiments include ~10-100,000 germline sites'))
+        warning(paste('only', nrow(germline), 'resampled germline sites were detected; aborting genome-wide extrapolation. Typical whole-genome experiments include ~10-100,000 germline sites'))
         reason <- paste0('insufficient germline sites (', nrow(germline), ')')
         ret <- data.frame(
             ncalls=NA,
