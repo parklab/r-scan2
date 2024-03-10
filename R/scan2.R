@@ -9,6 +9,7 @@ setClassUnion('null.or.character', c('NULL', 'character'))
 # if adding new slots to the class, be sure to update concat(...)
 # to combine the slots properly.
 setClass("SCAN2", slots=c(
+    package.version='null.or.character',
     config='null.or.list',
     region='null.or.GRanges',
     analysis.regions='null.or.GRanges',
@@ -60,6 +61,23 @@ check.chunked <- function(object, message) {
         warning(paste('this object may be a chunked (for parallelization) object.  found', sum(not.covered), 'analysis regions not covered:', message))
 }
 
+get.rscan2.version <- function() {
+    v <- utils::packageDescription('scan2')
+
+    # If r-scan2 was installed by devtools:install_github(), the GithubSHA1
+    # will be recorded in the package information. If so, return the commit
+    # short tag.
+    if ('GithubSHA1' %in% names(v)) {
+        commit.id <- v$GithubSHA1
+        attr(commit.id, 'source') <- 'github_commit'
+        return(commit.id)
+    } else {
+        version.string <- paste(v$Version, v$Date, sep='-')
+        attr(version.string, 'source') <- 'package_metadata'
+        return(version.string)
+    }
+}
+
 
 # The user must supply a SCAN2 configuration as either:
 #       1. a path to the .yaml file or
@@ -74,6 +92,7 @@ make.scan <- function(config, config.path, single.cell='NOT_SPECIFIED_BY_USER', 
         config <- read.config(config.path)
 
     object <- new("SCAN2",
+        package.version=get.rscan2.version(),
         config=config,
         sex=tolower(config$sex),
         single.cell=single.cell,
