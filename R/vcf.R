@@ -21,6 +21,7 @@ helper.vcf.header <- function(object, config=object@config) {
         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Total depth.">',
         '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Fraction of reads supporting the variant allele.">',
         '##FORMAT=<ID=AB,Number=1,Type=Float,Description="Estimated allele balance at this locus. Not applicable to bulk.">',
+        '##FORMAT=<ID=ABSD,Number=1,Type=Float,Description="Uncertainty in the allele balance estimate at this locus. Corresponds to the standard deviation of the Gaussian process. After transforming the allele balance (AB) measurement from [0,1] to the gp.mu=[-inf,inf] space, the allele balance distribution at this site is Normal(gp.mu(AB), ABSD). Not applicable to bulk.">',
         '##FORMAT=<ID=ABC,Number=A,Type=Float,Description="Allele balance consistency test between this mutation\'s AF and the model-estimated AB. Not applicable to bulk.">',
         '##FORMAT=<ID=PAA,Number=1,Type=Float,Description="Pre-amplification artifact score, -log10 scale. Not applicable to bulk.">',
         '##FORMAT=<ID=AA,Number=1,Type=Float,Description="Amplification artifact score, -log10 scale. Not applicable to bulk.">',
@@ -38,10 +39,6 @@ helper.vcf.header <- function(object, config=object@config) {
     vcf.header
 }
 
-##INFO=<ID=DB,Number=0,Type=Flag,Description="dbSNP common variant.">',
-##INFO=<ID=MSC,Number=A,Type=String,Description="Mutation signature channel assigned to each allele at this locus">',
-##INFO=<ID=BALT_LOWMQ,Number=1,Type=Integer,Description="Number of mutation supporting reads in bulk using a low mapping quality cutoff (=1)">',
-##INFO=<ID=TS,Number=0,Type=Flag,Description="Germline heterozygoius variant marked as a training site. N.B. only SNV training sites are used for AB model parameter fitting and AB estimation. Indel training sites are used primarily for sensitivity estimation.">',
 helper.build.info.string <- function(gatk) {
     info <- sprintf("MSC=%s;BALT_LOWMQ=%s",
         ifelse(is.na(gatk$mutsig), '.', gatk$mutsig),
@@ -89,12 +86,13 @@ setMethod("write.vcf", "SCAN2", function(object, file, simple.filters=FALSE, ove
             target.fdr=object@call.mutations$target.fdr,
             simple.filters=simple.filters),
         info=helper.build.info.string(object@gatk),
-        format='GT:DP:AD:AF:AB:ABC:PAA:AA:GQ:SC',
+        format='GT:DP:AD:AF:AB:ABSD:ABC:PAA:AA:GQ:SC',
         sc=sprintf("%s:%d:%d,%d:%s:%s:%s:%s:%s:%s:%d",
             ifelse((!is.na(pass) & pass) | (!is.na(rescue.col) & rescue.col), '0/1', './.'),
             dp, scref, scalt,
             ifelse(is.na(af), '.', sprintf("%0.4f", af)),
             ifelse(is.na(ab), '.', sprintf("%0.4f", ab)),
+            ifelse(is.na(gp.sd), '.', sprintf("%0.4f", gp.sd)),
             ifelse(is.na(abc.pv), '.', sprintf('%0.4f', -log10(abc.pv))),
             ifelse(is.na(lysis.fdr), '.', sprintf('%0.4f', -log10(lysis.fdr))),
             ifelse(is.na(mda.fdr), '.', sprintf('%0.4f', -log10(mda.fdr))),
