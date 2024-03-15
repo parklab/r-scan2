@@ -116,7 +116,7 @@ genome.string.to.chroms <- function(genome,
         species <- 'Mus_musculus'
     } else {
         # shouldn't be possible
-        stop("unsupported genoome string")
+        stop("unsupported genome string")
     }
 
     sqi <- genome.string.to.seqinfo.object(genome=genome)
