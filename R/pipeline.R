@@ -345,7 +345,7 @@ digest.depth.profile <- function(object, matrix.path, clamp.dp=500,
             # Unlike other files where we assume the file is already trimmed to the analysis
             # regions, the depth matrix may not be. So only read from the subsets of the
             # restricted genome tiling that overlap analysis regions.
-            gr <- intersect(gr, object@analysis.regions)
+            gr <- GenomicRanges::pintersect(gr, object@analysis.regions)
 
             pc <- perfcheck(paste('digest.depth.2sample',i),
                 dptab <- digest.depth.2sample(path=matrix.path, sc.sample=object@single.cell,
