@@ -163,7 +163,7 @@ annotate.gatk.counts <- function(gatk.meta, gatk, bulk.sample, sc.samples, legac
     # especially bad when data.tables are nested in data.table formulae.
     tref.var <- rowSums(as.matrix(gatk[, ..refs])) - gatk.meta$bref
     talt.var <- rowSums(as.matrix(gatk[, ..alts])) - gatk.meta$balt
-    just.cell.alts <- which(colnames(gatk) %in% sc.samples)
+    just.cell.alts <- which(colnames(gatk) %in% sc.samples) + 2
     # how many cells have any supporting reads for this site
     tcells.var <- rowSums(as.matrix(gatk[, ..just.cell.alts]) > 0)
 
