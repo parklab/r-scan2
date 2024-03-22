@@ -641,3 +641,23 @@ helper.plot.mutburden <- function(tab) {
         main=paste('SCAN2 total extrapolated burden'))
     abline(v=fdr.used, lty='dashed')
 }
+
+
+plot.binned.counts <- function(binned.counts, sample.name) {
+    chrs.in.order <- binned.counts[!duplicated(chr)]$chr
+
+    colmap <- setNames(head(rep(c('black','#666666'), length(chrs.in.order)), length(chrs.in.order)),
+        chrs.in.order)
+
+    par(mar=c(1/2,4,1/2,1))
+    plot(log2(binned.counts$ratio.gcnorm),
+        ylim=c(-3,3), col=colmap[binned.counts$chr], pch=20, cex=1/2,
+        xaxt='n', xaxs='i',
+        ylab='log2(read depth ratio)')
+    lines(log2(binned.counts$garvin.seg), lwd=2, col=2)
+    abline(v=which(c(binned.counts$chr, NA) != c(NA, binned.counts$chr)), col='#AAAAAA')
+
+    axis.posns <- c(0, cumsum(binned.counts[,.(pos=nrow(.SD)),by=chr]$pos))
+    text(y=-3.25, x=axis.posns[-length(axis.posns)] + diff(axis.posns)/2, labels=chrs.in.order, pos=3)
+    legend('topleft', bty='n', legend=sample.name)
+}
