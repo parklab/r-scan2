@@ -26,6 +26,7 @@ perfcheck <- function(msg, expr, print.header=FALSE, report.mem=TRUE) {
 
 
 run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, trainingcigars, dptab,
+    sc.binned.counts, bulk.binned.counts, gc.content.bins,
     # Tile the genome with 10MB tiles but only keep those that intersect the analyzed regions.
     tilewidth.for.parallelization=10e6,
     grs.for.parallelization=restricted.genome.tiling(object, tilewidth=tilewidth.for.parallelization),
@@ -143,6 +144,11 @@ run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, training
 
     pc <- perfcheck('add.depth.profile',
         x <- add.depth.profile(x, depth.path=dptab),
+        report.mem=report.mem)
+    cat(pc, '\n')
+
+    pc <- perfcheck('add.binned.counts',
+        x <- add.binned.counts(x, sc.path=sc.binned.counts, bulk.path=bulk.binned.counts, gc.path=gc.content.bins),
         report.mem=report.mem)
     cat(pc, '\n')
 
@@ -337,30 +343,73 @@ digest.depth.profile <- function(object, matrix.path, clamp.dp=500,
     cat('Digesting depth profile using', length(grs.for.parallelization), 'chunks.\n')
     cat('Parallelizing with', future::nbrOfWorkers(), 'cores.\n')
 
-    progressr::with_progress({
-        p <- progressr::progressor(along=1:length(grs.for.parallelization))
-        p(amount=0, class='sticky', perfcheck(print.header=TRUE))
-        xs <- future.apply::future_lapply(1:length(grs.for.parallelization), function(i) {
-            gr <- grs.for.parallelization[i,]
-            # Unlike other files where we assume the file is already trimmed to the analysis
-            # regions, the depth matrix may not be. So only read from the subsets of the
-            # restricted genome tiling that overlap analysis regions.
-            gr <- GenomicRanges::pintersect(gr, object@analysis.regions)
+    # This is a hack. Might be worth rolling up into restricted.genome.tiling() if
+    # we can be sure it'll operate correctly in all other contexts.
+    #
+    # Unlike other files where we assume the file is already trimmed to the analysis
+    # regions, the depth matrix may not be. So only read from the subsets of the
+    # restricted genome tiling that overlap analysis regions.
+    grs.for.parallelization <- unlist(GenomicRanges::subtract(grs.for.parallelization, GenomicRanges::gaps(object@analysis.regions)))
 
-            pc <- perfcheck(paste('digest.depth.2sample',i),
-                dptab <- digest.depth.2sample(path=matrix.path, sc.sample=object@single.cell,
-                    bulk.sample=object@bulk, clamp.dp=clamp.dp, region=gr, quiet=quiet),
-                report.mem=report.mem)
-            p(class='sticky', amount=1, pc)
+    autosomes <- genome.string.to.chroms(object@genome.string, group='auto')
+    sex.chroms <- genome.string.to.chroms(object@genome.string, group='sex')
 
-            dptab
-        })
-    }, enable=TRUE)
+    cat("Profiling autosomes..\n")
+    auto.parallel <- grs.for.parallelization[as.character(GenomeInfoDb::seqnames(grs.for.parallelization)) %in% autosomes]
+    # Might not be any autosomes in the analysis set
+    if (length(auto.parallel) > 0) {
+        progressr::with_progress({
+            p <- progressr::progressor(along=1:length(auto.parallel))
+            p(amount=0, class='sticky', perfcheck(print.header=TRUE))
+            xs <- future.apply::future_lapply(1:length(auto.parallel), function(i) {
+                gr <- auto.parallel[i,]
+                pc <- perfcheck(paste('digest.depth.2sample',i),
+                    dptab <- digest.depth.2sample(path=matrix.path, sc.sample=object@single.cell,
+                        bulk.sample=object@bulk, clamp.dp=clamp.dp, region=gr, quiet=quiet),
+                    report.mem=report.mem)
+                p(class='sticky', amount=1, pc)
+    
+                dptab
+            })
+        }, enable=TRUE)
 
-    # Sum all of the tables
-    dptab <- Reduce(`+`, xs)
+        # Sum all of the tables
+        dptab.autosomes <- Reduce(`+`, xs)
+    } else {
+        dptab.autosomes <- matrix(0, nrow=clamp.dp+1, ncol=clamp.dp+1)
+    }
 
-    list(dptab=dptab, clamp.dp=clamp.dp)
+    cat("Profiling sex chromosomes..\n")
+    # dptabs.sex is (as the plural name implies) a list of depth tables, one
+    # for each sex chromosome. the chromosome names are the table keys. If no
+    # sex chromosomes are in the analysis set, length=0 list.
+    dptabs.sex <- list()
+    # Do these one at a time and save the tables separately. E.g., for female
+    # humans, don't want to add a bunch of near-0 depth chrY measurements.
+    for (chrom in sex.chroms) {
+        sex.parallel <- grs.for.parallelization[as.character(GenomeInfoDb::seqnames(grs.for.parallelization)) == chrom]
+        if (length(sex.parallel) > 0) {
+            progressr::with_progress({
+                p <- progressr::progressor(along=1:length(sex.parallel))
+                p(amount=0, class='sticky', perfcheck(print.header=TRUE))
+                xs <- future.apply::future_lapply(1:length(sex.parallel), function(i) {
+                    gr <- sex.parallel[i,]
+                    pc <- perfcheck(paste('digest.depth.2sample',i),
+                        dptab <- digest.depth.2sample(path=matrix.path, sc.sample=object@single.cell,
+                            bulk.sample=object@bulk, clamp.dp=clamp.dp, region=gr, quiet=quiet),
+                        report.mem=report.mem)
+                    p(class='sticky', amount=1, pc)
+    
+                    dptab
+                })
+            }, enable=TRUE)
+    
+            # Sum all of the tables
+            dptabs.sex[[chrom]] <- Reduce(`+`, xs)
+        }
+    }
+
+    list(dptab=dptab.autosomes, dptabs.sex=dptabs.sex, clamp.dp=clamp.dp)
 }
 
 
