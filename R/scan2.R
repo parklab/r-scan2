@@ -18,6 +18,7 @@ setClass("SCAN2", slots=c(
     single.cell='character',
     bulk='character',
     sex='character',
+    amplification='character',
     gatk="null.or.dt.or.raw",
     integrated.table.path='null.or.character',
     ab.fits='null.or.df',
@@ -30,6 +31,7 @@ setClass("SCAN2", slots=c(
     fdr='null.or.list',
     call.mutations='null.or.list',
     depth.profile='null.or.list',
+    binned.counts='null.or.list',
     mutburden='null.or.list',
     mutsig.rescue='null.or.list',
     spatial.sensitivity='null.or.list'))
@@ -91,11 +93,16 @@ make.scan <- function(config, config.path, single.cell='NOT_SPECIFIED_BY_USER', 
     if (!missing(config.path))
         config <- read.config(config.path)
 
+    # Single cells may be missing from the amplification list.
+    amplification <- toupper(config$amplification[single.cell])
+    if (is.null(amplification))
+        amplification <- 'UNKNOWN'
+
     object <- new("SCAN2",
         package.version=get.rscan2.version(),
         config=config,
         sex=tolower(config$sex),
-        amplification=toupper(config$amplification),
+        amplification=amplification,
         single.cell=single.cell,
         bulk=config$bulk_sample,
         genome.string=config$genome,
@@ -104,6 +111,8 @@ make.scan <- function(config, config.path, single.cell='NOT_SPECIFIED_BY_USER', 
         region=region,
         static.filter.params=parse.static.filter.params(config),
         analysis.regions=parse.analysis.regions.to.granges(config),
+        depth.profile=NULL,
+        binned.counts=NULL,
         gatk=NULL,
         ab.fits=NULL,
         ab.estimates=NULL,
@@ -803,11 +812,22 @@ setMethod("add.depth.profile", "SCAN2", function(object, depth.path) {
 
     object@depth.profile <- list(
         dptab=dptab,
+        dptabs.sex=dptabs.sex,
         clamp.dp=clamp.dp
     )
     object
 })
 
+
+setGeneric("add.binned.counts", function(object, sc.path, bulk.path, gc.path)
+        standardGeneric("add.binned.counts"))
+setMethod("add.binned.counts", "SCAN2", function(object, sc.path, bulk.path, gc.path) {
+    object@binned.counts <- list(
+        sc=read.binned.counts(bin.path=sc.path, gc.path=gc.path),
+        bulk=read.binned.counts(bin.path=bulk.path, gc.path=gc.path)
+    )
+    object
+})
 
 setGeneric("is.compressed", function(object) standardGeneric("is.compressed"))
 setMethod("is.compressed", "SCAN2", function(object) {
