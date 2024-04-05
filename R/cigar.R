@@ -100,7 +100,9 @@ cigar.get.null.sites <- function(object, path=NULL, legacy=TRUE, quiet=FALSE) {
         } else {
             null.sites <- object@gatk[training.site==TRUE]
         }
+        compute.cigar.scores(null.sites)
     } else {
+        # When read from disk, scores were already computed
         null.sites <- data.table::fread(path)
     }
 
@@ -108,12 +110,11 @@ cigar.get.null.sites <- function(object, path=NULL, legacy=TRUE, quiet=FALSE) {
 }
 
 
-setGeneric("compute.excess.cigar.scores", function(object, path=NULL, legacy=TRUE, quiet=FALSE)
+setGeneric("compute.excess.cigar.scores", function(object, null.path=NULL, precomputed.path=NULL, legacy=TRUE, quiet=FALSE)
     standardGeneric("compute.excess.cigar.scores"))
-setMethod("compute.excess.cigar.scores", "SCAN2", function(object, path=NULL, legacy=TRUE, quiet=FALSE) {
+setMethod("compute.excess.cigar.scores", "SCAN2", function(object, null.path=NULL, precomputed.path=NULL, legacy=TRUE, quiet=FALSE) {
     check.slots(object, c('gatk', 'static.filter.params', 'cigar.data'))
-    null.sites <- cigar.get.null.sites(object, path, legacy, quiet)
-    compute.cigar.scores(null.sites)
+    null.sites <- cigar.get.null.sites(object, null.path, legacy, quiet)
     if (!quiet) {
         if (legacy) {
             cat(sprintf('LEGACY: computing CIGAR op rates only at resampled training sites (n=%d)..\n',
@@ -123,28 +124,44 @@ setMethod("compute.excess.cigar.scores", "SCAN2", function(object, path=NULL, le
                 nrow(null.sites)))
         }
     }
+
     muttypes <- c('snv', 'indel')
     object@excess.cigar.scores <- setNames(lapply(muttypes, function(mt) {
         null.sites.mt <- null.sites[muttype == mt]
-        pc <- perfcheck("excess CIGAR ops",
-            object@gatk[muttype == mt, c('id.score', 'hs.score') := list(
-                    cigar.emp.score(training=null.sites.mt, test=.SD, which='id', quiet=quiet, legacy=legacy),
-                    cigar.emp.score(training=null.sites.mt, test=.SD, which='hs', quiet=quiet, legacy=legacy)
-            )],
-            report.mem=FALSE)
-        if (!quiet) cat(pc, '\n')
+        test <- object@gatk[muttype == mt]
+        if (is.null(precomputed.path)) {
+            pc <- perfcheck("excess CIGAR ops (ID)",
+                    id.scores <- cigar.emp.score(training=null.sites.mt, test=test,
+                        which='id', quiet=quiet, legacy=legacy),
+                report.mem=FALSE)
+            pc <- perfcheck("excess CIGAR ops (HS)",
+                    hs.scores <- cigar.emp.score(training=null.sites.mt, test=test,
+                        which='hs', quiet=quiet, legacy=legacy),
+                report.mem=FALSE)
+            if (!quiet) cat(pc, '\n')
+        } else {
+            tab <- read.tabix.data(path=precomputed.path, region=object@region, quiet=quiet)
+            tab <- tab[muttype == mt]
+            id.scores <- tab$id.score
+            hs.scores <- tab$hs.score
+            # Extra sanity check to ensure read-in data is parallel to the gatk table
+            if (nrow(tab) != nrow(test) || any(tab$chr != test$chr))
+                stop('excess cigar score file', path, 'does not exactly match internal table chromosomes')
+            if (nrow(tab) != nrow(test) || any(tab$pos != test$pos))
+                stop('excess cigar score file', path, 'does not exactly match internal table positions')
+            if (nrow(tab) != nrow(test) || any(tab$refnt != test$refnt))
+                stop('excess cigar score file', path, 'does not exactly match internal table refnt')
+            if (nrow(tab) != nrow(test) || any(tab$altnt != test$altnt))
+                stop('excess cigar score file', path, 'does not exactly match internal table altnt')
+        }
+        object@gatk[muttype == mt, c('id.score', 'hs.score') := list(id.scores, hs.scores)]
 
-        # it is only necessary to score training sites to get the
-        # quantiles for test cutoff.
-        null.sites.mt[, c('id.score', 'hs.score') := list(
-            cigar.emp.score(training=null.sites.mt, test=null.sites.mt, which='id', quiet=quiet, legacy=legacy),
-            cigar.emp.score(training=null.sites.mt, test=null.sites.mt, which='hs', quiet=quiet, legacy=legacy)
-        )]
         sfp <- object@static.filter.params[[mt]]
         data.frame(sites=nrow(object@gatk[muttype==mt]),
             null.sites=nrow(null.sites.mt),
-            # These must not be calculated on chunked objects; the full
-            # set of null sites must be available.
+            # These quantile calculations are identical for each chunk (because the set of
+            # null sites is always the set over the whole genome). Recalculating doesn't
+            # waste that much time.
             id.score.q=quantile(null.sites.mt$id.score, prob=sfp$cg.id.q, na.rm=TRUE),
             hs.score.q=quantile(null.sites.mt$hs.score, prob=sfp$cg.hs.q, na.rm=TRUE),
             legacy=legacy)
