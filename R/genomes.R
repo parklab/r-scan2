@@ -108,6 +108,8 @@ genome.string.to.chroms <- function(genome,
     sqi=genome.string.to.seqinfo.object(genome),
     group=c('auto', 'sex', 'circular', 'all'))
 {
+    group <- match.arg(group)
+
     if (genome == 'hs37d5') {
         species <- 'Homo_sapiens'
     } else if (genome == 'hg38') {
@@ -125,33 +127,6 @@ genome.string.to.chroms <- function(genome,
 }
 
 
-genome.string.to.tiling <- function(genome=c('hs37d5', 'hg38', 'mm10'), tilewidth=10e6, group=c('auto', 'sex', 'circular', 'all')) {
-    genome <- match.arg(genome)
-    group <- match.arg(group)
-
-    sqi <- genome.string.to.seqinfo.object(genome=genome)
-    chroms.to.tile <- genome.string.to.chroms(genome=genome, sqi=sqi, group=group)
-    grs <- GenomicRanges::tileGenome(seqlengths=sqi[chroms.to.tile], tilewidth=tilewidth, cut.last.tile.in.chrom=TRUE)
-    grs
-}
-
-
-# Tile the genome with `tilewidth` windows, but only retain windows that overlap
-# an analyzed chunk of genome.  The "analyzed chunks of genome" are the `@analysis.regions`
-# stored in the SCAN2 objects (they are now always parsed from the configuration yaml
-# when making a SCAN2 object).
-# If you have a config.yaml file but no object, just build a dummy SCAN2 object with
-#   make.scan(config=config.yaml)
-restricted.genome.tiling <- function(object, tilewidth=10e6) {
-    sqi <- object@genome.seqinfo
-
-    # Always use group='all' - any unused contigs will be automatically discarded when
-    # intersecting against @analysis.regions
-    maximal.set <- genome.string.to.tiling(genome=object@genome.string, tilewidth=tilewidth, group='all')
-    maximal.set[countOverlaps(maximal.set, object@analysis.regions) > 0]
-}
-
-
 haploid.chroms <- function(object) {
     haploid.chroms <- c()
     if (object@genome.string == 'hs37d5' | object@genome.string == 'hg38') {
@@ -164,4 +139,127 @@ haploid.chroms <- function(object) {
         stop(paste('unsupported genome string', object@genome.string))
     }
     return(haploid.chroms)
+}
+
+get.autosomes <- function(object) {
+    autosome.names <- genome.string.to.chroms(object@genome.string, group='auto')
+    autosome.names <- autosome.names[autosome.names %in% as.character(seqnames(object@analysis.regions))]
+    autosome.names
+}
+
+get.sex.chroms <- function(object) {
+    sex.chrom.names <- genome.string.to.chroms(object@genome.string, group='sex')
+    sex.chrom.names <- sex.chrom.names[sex.chrom.names %in% as.character(seqnames(object@analysis.regions))]
+    sex.chrom.names
+}
+
+######################################################################################
+# Genome tiling functions
+#
+# These tiling functions work reasonably well for analysis sets that are mostly
+# contiguous, even when those sets are small, such as those used in demo runs.
+# They likely do not work well for highly non-contiguous sets like exomes.
+######################################################################################
+
+genome.string.to.tiling <- function(genome=c('hs37d5', 'hg38', 'mm10'), tilewidth=10e6, group=c('auto', 'sex', 'circular', 'all')) {
+    genome <- match.arg(genome)
+    group <- match.arg(group)
+
+    sqi <- genome.string.to.seqinfo.object(genome=genome)
+    chroms.to.tile <- genome.string.to.chroms(genome=genome, sqi=sqi, group=group)
+    grs <- GenomicRanges::tileGenome(seqlengths=sqi[chroms.to.tile], tilewidth=tilewidth, cut.last.tile.in.chrom=TRUE)
+    grs
+}
+
+
+# Tile the analysis set with `tilewidth` windows.  The "analysis set" is `object@analysis.regions`
+# If you have a config.yaml file but no object, just build a dummy SCAN2 object with
+#   make.scan(config=config.yaml)
+analysis.set.tiling <- function(object, tilewidth=10e6, quiet=FALSE) {
+    analysis.set.tiling.helper(regions=object@analysis.regions, tilewidth=tilewidth, quiet=quiet)
+}
+
+
+analysis.set.tiling.helper <- function(regions, tilewidth=10e6, quiet=FALSE) {
+    # GenomicRanges::tile() does not preserve seqinfo() of the input GRanges.
+    # Seems like unintended behavior.
+    grs <- unlist(GenomicRanges::tile(regions, width=tilewidth)) 
+    seqinfo(grs) <- GenomeInfoDb::seqinfo(regions)
+
+    if (!quiet) {
+        cat(sprintf("Analysis set: %.1f megabases over %d tiles; target tilewidth=%d.\n",
+            sum(width(grs))/1e6, length(grs), tilewidth))
+        cat('Detailed chunk schedule:\n')
+        cat(sprintf('%7s %5s %10s %10s\n', 'Chunk', 'Chr', 'Start', 'End'))
+        for (i in 1:length(grs)) {
+            cat(sprintf('%7d %5s %10d %10d\n', i,
+                as.character(seqnames(grs)[i]), start(grs)[i], end(grs)[i]))
+        }
+    }
+    grs
+}
+
+
+# Wrapper for analysis.set.tiling() meant to select a tilewidth that will
+# make decent (i.e., hopefully close to equal) use of the supplied cores.
+#
+# Split work into `total.tiles` = n.cores * tiles.per.core, except when this
+# would create tiles too far below `min.tile.width`.  Badness of the tile set
+# should take into account:
+#   1. Not using all available cores. E.g., analyzing a 1Mb region with 16
+#      cores would result in 6 unused cores if min.tile.width=100kb were
+#      strictly enforced. So, try to make total.tiles a multiple of n.cores
+#      if possible.
+#   2. If possible, it's good to have many jobs per core to enable progress
+#      bar printing. E.g., if the work is split into exactly 1 job per core,
+#      then no updates would be given until the entire pipeline finishes.
+#   3. the reasons listed below about why excessively tiny tiles might lead
+#      to reduced performance.
+#
+# There are a couple of reasons for wanting to enforce a min.tile.width:
+#   1. Overhead of future_lapply may dominate the actual computation
+#   2. Some parts of the SCAN2 pipeline require reading a large region than
+#      the analyzed area - for example, in AB estimation flanking regions
+#      of 10kb, 100kb or 1Mb are added to obtain heterozygous germline
+#      variants near the edges of each window.
+analysis.set.tiling.for.parallelization <- function(object, total.tiles=300, min.tile.width=1e5, n.cores=future::nbrOfWorkers(), quiet=FALSE)
+{
+    analysis.set.tiling.for.parallelization.helper(regions=object@analysis.regions,
+        total.tiles=total.tiles,
+        min.tile.width=min.tile.width,
+        n.cores=n.cores,
+        quiet=quiet)
+}
+
+
+analysis.set.tiling.for.parallelization.helper <- function(regions, total.tiles=300, min.tile.width=1e5, n.cores=future::nbrOfWorkers(), quiet=FALSE)
+{
+    total.bp <- sum(width(regions))
+
+    # Tiles are never larger than one chromosome, so enforce #chroms
+    # as the tile minimum.
+    total.tiles <- max(total.tiles, length(unique(seqnames(reduce(regions)))))
+
+    possible.tiles.per.core <- (1:total.tiles)
+    bp.per.tile <- as.integer(ceiling(total.bp/(possible.tiles.per.core*n.cores)))
+    possible.tiles.per.core <- possible.tiles.per.core[bp.per.tile >= min.tile.width]
+    if (length(possible.tiles.per.core) == 0) {
+        # If there are no tile sets that satisfy the min.tile.width, then
+        # just use 1 tile per core (= maximize tile size).
+        tiles.per.core <- 1
+    } else {
+        # Otherwise, choose tiles per core to get closest to `total.tiles` jobs.
+        tiles.per.core <- possible.tiles.per.core[which.min(abs(possible.tiles.per.core*n.cores - total.tiles))]
+    }
+
+    n.tiles <- n.cores*tiles.per.core
+    tilewidth <- as.integer(ceiling(total.bp/n.tiles))
+
+    grs <- analysis.set.tiling.helper(regions=regions, tilewidth=tilewidth, quiet=quiet)
+    if (!quiet) {
+        cat('Parallelizing with', n.cores, 'cores,', tiles.per.core, 'target tiles per core,', length(grs), 'actual tiles.\n')
+        cat('Tile size summary (in Mb):\n')
+        print(summary(width(grs)/1e6))
+    }
+    grs
 }
