@@ -18,9 +18,11 @@ get.training.sites.for.abmodel.by.range <- function(region, integrated.table.pat
 
         # trim() always generates a warning for first and last regions on a chromosome
         # because adding/subtracting flank goes outside of the chromosome boundaries.
-        extended.range <- trim(GRanges(seqnames=seqnames(region)[1],
-            ranges=IRanges(start=start(region)-flank, end=end(region)+flank),
+        extended.range <- GenomicRanges::trim(
+            GenomicRanges::GRanges(seqnames=seqnames(region)[1],
+                ranges=IRanges(start=start(region)-flank, end=end(region)+flank),
                 seqinfo=seqinfo(region)))
+
         extended.training.hsnps <- read.training.hsnps(integrated.table.path,
             sample.id=single.cell.id, region=extended.range, quiet=quiet)
         if (!quiet)
@@ -42,14 +44,16 @@ get.training.sites.for.abmodel <- function(object, region,
 {
     # if this is a chunked object, extend hSNPs up/downstream so that full info is available at edges
     if (!is.null(region)) {
+        flanks.to.try <- 10^(5:8)
         training.hsnps <- get.training.sites.for.abmodel.by.range(region=region,
-            integrated.table.path=integrated.table.path, single.cell.id=object@single.cell, quiet=quiet)
+            integrated.table.path=integrated.table.path, single.cell.id=object@single.cell,
+            flanks.to.try=flanks.to.try, quiet=quiet)
 
         # nrow(object@gatk) > 0: don't give up in heterochromatic arms of, e.g., chr13
         # where there are neither hSNPs nor somatic candidates.
         if (nrow(training.hsnps) < 2 & nrow(object@gatk) > 0) {
             stop(sprintf("%d hSNPs found within %d bp of %s:%d-%d, need at least 2; giving up",
-                nrow(training.hsnps), flank,
+                nrow(training.hsnps), max(flanks.to.try),
                 seqnames(region)[1], start(region)[1], end(region)[1]))
         }
     } else {
@@ -74,7 +78,8 @@ compute.ab.given.sites.and.training.data <- function(sites, training.hsnps, ab.f
         time.elapsed <- system.time(z <- infer.gp1(ssnvs=sites, fit=ab.fit,
             hsnps=hsnps, flank=1e5, verbose=!quiet))
         if (!quiet) print(time.elapsed)
-        z
+        # z is a matrix
+        as.data.table(z)
     }
     if (length(chroms) == 1) {
         # slightly more efficient for real use cases with chunked computation
@@ -388,7 +393,7 @@ compute.fdr.prior.data.for.candidates <- function(candidates, hsnps, bins=20, ra
         } else {
             # non-legacy mode just parallelizes this step.  same strategy is used.
             # use a special value of NA to signal the last depth bucket
-            fcs <- future.apply::future_lapply(c(0:max.dp,NA), function(thisdp) {
+            hsnps.by.depth <- lapply(c(0:max.dp,NA), function(thisdp) {
                 if (is.na(thisdp)) {
                     germ.df <- hsnps[dp > max.dp]
                     som.df <- candidates[dp > max.dp]
@@ -396,7 +401,19 @@ compute.fdr.prior.data.for.candidates <- function(candidates, hsnps, bins=20, ra
                     germ.df <- hsnps[dp == thisdp]
                     som.df <- candidates[dp == thisdp]
                 }
-                ret <- fcontrol(germ.df=germ.df, som.df=som.df, bins=bins, eps=eps, quiet=quiet)
+                list(germ.df=germ.df, som.df=som.df)
+            })
+
+            #fcs <- future.apply::future_lapply(c(0:max.dp,NA), function(thisdp) {
+                #if (is.na(thisdp)) {
+                    #germ.df <- hsnps[dp > max.dp]
+                    #som.df <- candidates[dp > max.dp]
+                #} else {
+                    #germ.df <- hsnps[dp == thisdp]
+                    #som.df <- candidates[dp == thisdp]
+                #}
+            fcs <- future.apply::future_lapply(hsnps.by.depth, function(thisdp) {
+                ret <- fcontrol(germ.df=thisdp$germ.df, som.df=thisdp$som.df, bins=bins, eps=eps, quiet=quiet)
                 if (!quiet) p()
                 ret
             }, future.seed=0)
