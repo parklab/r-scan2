@@ -10,6 +10,24 @@ read.binned.counts <- function(bin.path, gc.path) {
 }
 
 
+# Runs a very simple CNV-caller-like pipeline: GC-bias correction,
+# segmentation with CBS and copy number assignment using a Ginkgo-like
+# sum of squares minimization.
+#
+# If n.bins > 1, also collapse bins 
+process.binned.counts <- function(object, n.bins=100) {
+    primary.chroms <- c(genome.string.to.chroms(object@genome.string, group='auto'),
+                        genome.string.to.chroms(object@genome.string, group='sex'))
+    bc <- object@binned.counts$sc[chr %in% primary.chroms]
+    if (n.bins > 1)
+        bc <- collapse.binned.counts(bc, n.bins)
+
+    bc <- gc.correct(bc)
+    bc <- segment.cbs(bc, genome=object@genome.string, method='garvin')
+    bc <- mimic.ginkgo(bc)
+}
+
+
 # Group bins into non-overlapping sets of `n.bins` each and sum them.
 collapse.binned.counts <- function(binned.counts, n.bins) {
     # Get original chromosome order
@@ -207,4 +225,5 @@ mimic.ginkgo <- function(segmented.binned.counts, total.ploidies=seq(1.5,6,by=0.
     ploidy <- as.numeric(names(sos.errors)[which.min(sos.errors)])
     # save the integer ploidies. maybe one day also return the SoS curves
     segmented.binned.counts[, garvin.seg.integer := round(garvin.seg*ploidy)]
+    segmented.binned.counts[, garvin.ratio.gcnorm.ploidy := ratio.gcnorm*ploidy]
 }
