@@ -349,23 +349,21 @@ gatk.select.and.resample.training.sites <- function(gatk, haploid.chroms, M=20, 
     ret <- list()
 
     # First set the training sites. This does not exactly match legacy SCAN2, which
-    # excluded training sites based on one single cell characteristic (having GT!=./.)
+    # excluded training sites based on one single cell characteristic (having phased GT!=./.)
     gatk[, training.site := !is.na(phased.gt) &
-        # if you aren't a haploid chrom, 0|1 and 1|0 hets are informative, hom 1|1 are not
-        ((!(chr %in% haploid.chroms) & (phased.gt == '0|1' | phased.gt == '1|0')) |
-        # if you are a haploid chrom, 0|1 and 1|0 hets are artifacts and hom 1|1 is informative
-            (chr %in% haploid.chroms & phased.gt == '1|1')) & bulk.gt != './.']
+        # diploid chroms: 0|1 and 1|0 hets are informative, hom 1|1 are not
+        ((!(chr %in% haploid.chroms) & (!is.na(phased.gt) & phased.gt == '0|1' | phased.gt == '1|0')) |
+        # haploid chroms: 0|1 and 1|0 hets are artifacts and hom 1|1 is informative
+            (chr %in% haploid.chroms & !is.na(phased.gt) & phased.gt == '1|1')) & bulk.gt != './.']
 
     for (mt in c('snv', 'indel')) {
         aux.data <- resample.germline(
             sites=gatk[somatic.candidate == TRUE & muttype == mt],
-            hsnps=gatk[!is.na(phased.gt) & phased.gt != './.' & muttype == mt],
+            hsnps=gatk[training.site == TRUE & muttype == mt],
             M=M, seed=seed)
 
-        # aux.data$selection is aligned to the input 'hsnps' table
-        # FIXME: resampled.training.site here assumes that all phased sites are
-        # training sites. This is legacy behavior, but isn't ideal.
-        gatk[!is.na(phased.gt) & phased.gt != './.' & muttype == mt,
+        # aux.data$selection is aligned to the 'hsnps' table above in resample.germline()
+        gatk[training.site == TRUE & muttype == mt,
             resampled.training.site := aux.data$selection$keep]
         ret[[mt]] <- aux.data
     }
