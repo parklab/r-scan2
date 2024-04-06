@@ -6,8 +6,8 @@
 #     pipelines this can make up 99%+ of the runtime.
 perfcheck <- function(msg, expr, print.header=FALSE, report.mem=TRUE) {
     if (print.header) {
-        return(sprintf('%30s | %9s %11s %9s %9s',
-            'Step (chunk)', 'Mem Mb', 'Peak mem Mb', 'Time (s)', 'Elapsed'))
+        return(sprintf('%45s | %7s %10s %7s %7s',  # add +1 for decimal, +1 for 1 place after decimal
+            'Step (chunk)', 'Mem Mb', 'Peak Mb', 'Time(s)', 'Elapsed'))
     }
     t <- system.time(eval(expr), gcFirst=report.mem)
     mem.used <- NA
@@ -17,38 +17,43 @@ perfcheck <- function(msg, expr, print.header=FALSE, report.mem=TRUE) {
         mem.used <- sum(g[,which(colnames(g)=='used')+1])
         max.mem.used <- sum(g[,which(colnames(g)=='max used')+1])
     }
-    sprintf('%30s |  %7.1f %10.1f %7.1f %7.1f', msg,
+    sprintf('%40s |  %5.1f %8.1f %5.1f %5.1f', msg,
         mem.used, max.mem.used,
         # combine user, system, and child cpu time
         sum(t[names(t) != 'elapsed']),
         t['elapsed'])
 }
 
-
-run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, trainingcigars, dptab,
-    sc.binned.counts, bulk.binned.counts, gc.content.bins,
-    # Tile the genome with 10MB tiles but only keep those that intersect the analyzed regions.
-    tilewidth.for.parallelization=10e6,
-    grs.for.parallelization=restricted.genome.tiling(object, tilewidth=tilewidth.for.parallelization),
+# ab.ests.and.models - a bgzipped, tabix-indexed file of precomputed AB
+#       estimates and mutation vs. artifact models.
+# excess.cigar.path - a bgzipped, tabix-indexed file of precomputed excess
+#       CIGAR scores.
+# what.to.compute - somewhat of a misnomer: the list of things to either compute
+#       or add to the object. If either of the *.path arguments are supplied,
+#       the values are not "computed" here but rather read from file. IMPORTANT:
+#       if any component of what.to.compute is left out, then it will be neither
+#       computed OR read in from file - there will be no columns associated with
+#       that component in the final table.
+run.chunked.pipeline <- function(object, int.tab, abfits,
+    sccigars, bulkcigars, trainingcigars,
+    ab.ests.and.models.path=NULL,
+    excess.cigar.scores.path=NULL,
+    what.to.compute=c("ab.ests.and.models", "excess.cigar"),
+    grs.for.parallelization=analysis.set.tiling.for.parallelization(object),
     report.mem=TRUE, verbose=TRUE)
 {
+    what.to.compute <- match.arg(what.to.compute, several.ok=TRUE)
+
     cat('Starting chunked SCAN2 pipeline on', length(grs.for.parallelization), 'chunks\n')
+    cat('Will compute:', what.to.compute, '\n')
     cat('Setting OpenBLAS corecount to 1. This prevents multithreaded matrix multiplication in chunks where it is undesired.\n')
     RhpcBLASctl::blas_set_num_threads(1)
-    cat('Parallelizing with', future::nbrOfWorkers(), 'cores\n')
-    cat('Detailed chunk schedule:\n')
-    cat(sprintf('%7s %5s %10s %10s\n', 'Chunk', 'Chr', 'Start', 'End'))
-    for (i in 1:length(grs.for.parallelization)) {
-        cat(sprintf('%7d %5s %10d %10d\n', i,
-            as.character(seqnames(grs.for.parallelization)[i]),
-            start(grs.for.parallelization)[i],
-            end(grs.for.parallelization)[i]))
-    }
 
-    mimic_legacy <- object@config$mimic_legacy
-    if (mimic_legacy) {
-        cat("mimic_legacy=TRUE: trying to reproduce very old pipeline behavior.\n")
-    }
+    necessary.globals <- c('grs.for.parallelization', 'object', 'int.tab', 'verbose', 'report.mem', 'what.to.compute')
+    if ('ab.ests.and.models' %in% what.to.compute)
+        necessary.globals <- c(necessary.globals, 'abfits', 'ab.ests.and.models.path')
+    if ('excess.cigar' %in% what.to.compute)
+        necessary.globals <- c(necessary.globals, 'sccigars', 'bulkcigars', 'trainingcigars', 'excess.cigar.scores.path')
 
     progressr::with_progress({
         p <- progressr::progressor(along=1:length(grs.for.parallelization))
@@ -56,65 +61,103 @@ run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, training
         xs <- future.apply::future_lapply(1:length(grs.for.parallelization), function(i) {
             gr <- grs.for.parallelization[i,]
 
-            # even though copy() is a data.table function, it will copy this R object.
-            # the entire copy() call is probably not necessary since an internal copy-on-
-            # write *should* occur on the @region <- gr line below. However, the copy()
-            # call makes the desired behavior more explicit.
-            # note there is no data.table in `object` yet, the copy here is to make a
-            # chunked object with the same config values and parameters as the user-
-            # supplied `object`.  SCAN2 uses the @region slot to parallelize, meaning
-            # the same `object` from the caller of this function cannot be reused.
-            #chunked.object <- data.table::copy(object)
-            #chunked.object@region <- gr
-
-            chunked.object <- make.scan(config=object@config, single.cell=object@single.cell, region=gr)
+            # chunked object representing only the genomic region in 'gr'
+            chunked.object <- make.scan(config=object@config, single.cell=object@single.cell, region=gr,
+                pipeline.version=object@pipeline.version['version'],
+                pipeline.buildnum=object@pipeline.version['buildnum'],
+                pipeline.githash=object@pipeline.version['githash'])
 
             # Don't put the perfcheck() calls in p(), because progressr
             # doesn't evaluate those arguments if progress bars are turned off.
             pc <- perfcheck(paste('read.integrated.table',i),
-                chunked.object <- read.integrated.table(chunked.object, path=int.tab, quiet=!verbose), report.mem=report.mem)
+                chunked.object <- read.integrated.table(chunked.object, path=int.tab, quiet=!verbose),
+                report.mem=report.mem)
             p(class='sticky', amount=0, pc)
 
-            pc <- perfcheck(paste('add.ab.fits',i),
-                chunked.object <- add.ab.fits(chunked.object, path=abfits), report.mem=report.mem)
-            p(class='sticky', amount=0, pc)
+            if ('ab.ests.and.models' %in% what.to.compute) {
+                pc <- perfcheck(paste('add.ab.fits',i),
+                    chunked.object <- add.ab.fits(chunked.object, path=abfits), report.mem=report.mem)
+                p(class='sticky', amount=0, pc)
 
-            pc <- perfcheck(paste('compute.ab.estimates',i),
-                chunked.object <- compute.ab.estimates(chunked.object, quiet=!verbose), report.mem=report.mem)
-            p(class='sticky', amount=0, pc)
-
-            pc <- perfcheck(paste('add.cigar.data',i),
-                chunked.object <- add.cigar.data(chunked.object, sccigars, bulkcigars, quiet=!verbose), report.mem=report.mem)
-            p(class='sticky', amount=0, pc)
-
-            pc <- perfcheck(paste('compute.models',i),
-                chunked.object <- compute.models(chunked.object, verbose=verbose), report.mem=report.mem)
-            p(class='sticky', amount=0, pc)
-
-            # Note about legacy mode: legacy mode isn't actually legacy, it's what
-            # is still currently used. Legacy uses only resampled germline hets for
-            # the null CIGAR distn while the new mode uses all germline hets. The new
-            # mode is *way* too slow to ever use because the computation is O(n) where
-            # n is the number of null sites. The new mode needs to approximate the
-            # 2-d CIGAR op probability space with a fixed N (e.g., of gaussians) to
-            # guarantee reasonable runtime.
-            pc <- perfcheck(paste('compute.excess.cigar.scores',i),
-                chunked.object <- compute.excess.cigar.scores(object=chunked.object, path=trainingcigars, legacy=TRUE, quiet=!verbose),
+                pc <- perfcheck(paste0('compute.ab.estimates ', ifelse(!is.null(ab.ests.and.models.path), '(precomputed) ', ''), i),
+                    chunked.object <- compute.ab.estimates(chunked.object, path=ab.ests.and.models.path, quiet=!verbose),
                     report.mem=report.mem)
-            p(class='sticky', amount=0, pc)
+                p(class='sticky', amount=0, pc)
 
-            pc <- perfcheck(paste('compute.static.filters',i),
-                chunked.object <- compute.static.filters(object=chunked.object, mode=ifelse(mimic_legacy, 'legacy', 'new')), report.mem=report.mem)
-            p(class='sticky', amount=0, pc)
+                pc <- perfcheck(paste('compute.models', ifelse(!is.null(ab.ests.and.models.path), '(precomputed) ', ''), i),
+                    chunked.object <- compute.models(chunked.object, path=ab.ests.and.models.path, verbose=verbose),
+                    report.mem=report.mem)
+                p(class='sticky', amount=0, pc)
+            }
+
+
+            if ('excess.cigar' %in% what.to.compute) {
+                pc <- perfcheck(paste('add.cigar.data ',i),
+                    chunked.object <- add.cigar.data(chunked.object, sccigars, bulkcigars, quiet=!verbose),
+                    report.mem=report.mem)
+                p(class='sticky', amount=0, pc)
+    
+                # The 'legacy' mode for compute.excess.cigar.scores isn't actually legacy, it
+                # is still the default method. Legacy uses only resampled germline hets for
+                # the null CIGAR distn while the new mode uses all germline hets. The new
+                # mode is *way* too slow to use because the computation is O(n^2) where
+                # n is the number of null sites. The new mode needs to approximate the
+                # 2-d CIGAR op probability space with a fixed N (e.g., of gaussians) to
+                # guarantee reasonable runtime.
+                pc <- perfcheck(paste('compute.excess.cigar.scores ', ifelse(!is.null(excess.cigar.scores.path), '(precomputed) ', ''), i),
+                    chunked.object <- compute.excess.cigar.scores(object=chunked.object, null.path=trainingcigars, precomputed.path=excess.cigar.scores.path, legacy=TRUE, quiet=!verbose),
+                    report.mem=report.mem)
+                p(class='sticky', amount=0, pc)
+            }
 
             p()
             chunked.object
-        }, future.seed=0)  # CRITICAL! library(future) ensures that each child process
-                           # has a different random seed.
+        },
+        # CRITICAL! library(future) ensures that each child process has a different random seed.
+        future.seed=0,  
+        future.globals=necessary.globals)
     })
     cat("Chunked pipeline complete.\n")
 
-    # The above future_apply with future.seed changed R's RNG implementation
+    pc <- perfcheck('concatenating chunked objects',
+        x <- do.call(concat, xs),
+        report.mem=report.mem)
+    cat(pc, '\n')
+    x
+}
+
+
+run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, trainingcigars, dptab,
+    sc.binned.counts, bulk.binned.counts, gc.content.bins,
+    ab.ests.and.models.path=NULL,
+    excess.cigar.scores.path=NULL,
+    abmodel.covs=NULL,
+    depth.covs=NULL,
+    grs.for.parallelization=analysis.set.tiling.for.parallelization(object),
+    report.mem=TRUE, verbose=TRUE)
+{
+    cat('Starting chunked SCAN2 pipeline on', length(grs.for.parallelization), 'chunks\n')
+    cat('Setting OpenBLAS corecount to 1. This prevents multithreaded matrix multiplication in chunks where it is undesired.\n')
+    RhpcBLASctl::blas_set_num_threads(1)
+
+    mimic_legacy <- object@config$mimic_legacy
+    mode <- 'new'
+    if (mimic_legacy) {
+        cat("mimic_legacy=TRUE: trying to reproduce very old pipeline behavior.\n")
+        mode <- 'legacy'
+    }
+
+    # Nothing in the chunked pipeline depends on legacy mode - yet
+    x <- run.chunked.pipeline(object=object, int.tab=int.tab, abfits=abfits,
+        sccigars=sccigars, bulkcigars=bulkcigars, trainingcigars=trainingcigars,
+        ab.ests.and.models.path=ab.ests.and.models.path,
+        excess.cigar.scores.path=excess.cigar.scores.path,
+        what.to.compute=c("ab.ests.and.models", "excess.cigar"),
+        grs.for.parallelization=grs.for.parallelization,
+        report.mem=report.mem, verbose=verbose)
+
+    # The future_apply with future.seed in run.chunked.pipeline() changes R's
+    # RNG implementation
     # to L'Ecuyer-CMRG.  To maintain compatibility with older SCAN2 packages,
     # need to reset to the R default Mersenne-Twister
     if (mimic_legacy) {
@@ -122,18 +165,17 @@ run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, training
         RNGkind('Mersenne-Twister')
     }
 
-    pc <- perfcheck('concatenating chunked objects',
-        x <- do.call(concat, xs),
-        report.mem=report.mem)
+    pc <- perfcheck('compute.static.filters',
+        chunked.object <- compute.static.filters(object=x, mode=mode), report.mem=report.mem)
     cat(pc, '\n')
 
     pc <- perfcheck('compute.fdr.prior.data',
-        x <- compute.fdr.prior.data(x, mode=ifelse(mimic_legacy, 'legacy', 'new'), quiet=!verbose),
+        x <- compute.fdr.prior.data(x, mode=mode, quiet=!verbose),
         report.mem=report.mem)
     cat(pc, '\n')
 
     pc <- perfcheck('compute.fdr',
-        x <- compute.fdr(x, mode=ifelse(mimic_legacy, 'legacy', 'new'), quiet=!verbose),
+        x <- compute.fdr(x, mode=mode, quiet=!verbose),
         report.mem=report.mem)
     cat(pc, '\n')
 
@@ -157,6 +199,15 @@ run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, training
         report.mem=report.mem)
     cat(pc, '\n')
 
+    pc <- perfcheck('add.sensitivity.covariates',
+        x <- add.sensitivity.covariates(x, abmodel.covs.path=abmodel.covs, depth.covs.path=depth.covs),
+        report.mem=report.mem)
+    cat(pc, '\n')
+
+    pc <- perfcheck('compute.sensitivity.models',
+        x <- compute.sensitivity.models(x),
+        report.mem=report.mem)
+    cat(pc, '\n')
     x
 }
 
@@ -175,12 +226,10 @@ run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, training
 # contains many site-specific annotations and the full matrix of alt and ref
 # read counts for all single cells and bulks.
 make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf, panel=NULL,
-    tilewidth.for.parallelization=10e6,
-    grs.for.parallelization=restricted.genome.tiling(dummy.object, tilewidth=tilewidth.for.parallelization),
+    grs.for.parallelization=analysis.set.tiling.for.parallelization(dummy.object),
     quiet=TRUE, report.mem=FALSE)
 {
     cat('Starting integrated table pipeline on', length(grs.for.parallelization), 'chunks.\n')
-    cat('Parallelizing with', future::nbrOfWorkers(), 'cores.\n')
 
     mimic_legacy <- dummy.object@config$mimic_legacy
     if (mimic_legacy) {
@@ -278,12 +327,10 @@ make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf,
 #
 # `dummy.object` - this is only used to get grs.for.parallelization.
 join.phased.hsnps <- function(dummy.object, bulk.called.vcf, hsnps.vcf,
-    tilewidth.for.parallelization=10e6,
-    grs.for.parallelization=restricted.genome.tiling(dummy.object, tilewidth=tilewidth.for.parallelization),
+    grs.for.parallelization=analysis.set.tiling.for.parallelization(dummy.object),
     quiet=TRUE, report.mem=FALSE)
 {
     cat('Starting phased hSNP joining on', length(grs.for.parallelization), 'chunks.\n')
-    cat('Parallelizing with', future::nbrOfWorkers(), 'cores.\n')
 
     progressr::with_progress({
         p <- progressr::progressor(along=1:length(grs.for.parallelization))
@@ -336,20 +383,10 @@ join.phased.hsnps <- function(dummy.object, bulk.called.vcf, hsnps.vcf,
 
 
 digest.depth.profile <- function(object, matrix.path, clamp.dp=500,
-    tilewidth.for.parallelization=10e6,
-    grs.for.parallelization=restricted.genome.tiling(object, tilewidth=tilewidth.for.parallelization),
+    grs.for.parallelization=analysis.set.tiling.for.parallelization(object),
     quiet=TRUE, report.mem=TRUE)
 {
     cat('Digesting depth profile using', length(grs.for.parallelization), 'chunks.\n')
-    cat('Parallelizing with', future::nbrOfWorkers(), 'cores.\n')
-
-    # This is a hack. Might be worth rolling up into restricted.genome.tiling() if
-    # we can be sure it'll operate correctly in all other contexts.
-    #
-    # Unlike other files where we assume the file is already trimmed to the analysis
-    # regions, the depth matrix may not be. So only read from the subsets of the
-    # restricted genome tiling that overlap analysis regions.
-    grs.for.parallelization <- unlist(GenomicRanges::subtract(grs.for.parallelization, GenomicRanges::gaps(object@analysis.regions)))
 
     autosomes <- genome.string.to.chroms(object@genome.string, group='auto')
     sex.chroms <- genome.string.to.chroms(object@genome.string, group='sex')
@@ -417,14 +454,12 @@ digest.depth.profile <- function(object, matrix.path, clamp.dp=500,
 # Recommended to use smaller tiles than the usual 10 MB. The files processed
 # here are basepair resolution and cover essentially the entire genome.
 make.callable.regions <- function(object, matrix.path, muttype=c('snv', 'indel'),
-    tilewidth.for.parallelization=5e6,
-    grs.for.parallelization=restricted.genome.tiling(object, tilewidth=tilewidth.for.parallelization),
+    grs.for.parallelization=analysis.set.tiling.for.parallelization(object),
     quiet=TRUE, report.mem=TRUE)
 {
     muttype <- match.arg(muttype)
 
     cat('Getting callable regions using', length(grs.for.parallelization), 'chunks.\n')
-    cat('Parallelizing with', future::nbrOfWorkers(), 'cores.\n')
 
     progressr::with_progress({
         p <- progressr::progressor(along=1:length(grs.for.parallelization))
