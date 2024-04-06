@@ -243,9 +243,10 @@ summarize.fdr.prior.data <- function(object) {
 }
 
 summarize.depth.profile <- function(object) {
-    ret <- list(dptab=NULL, clamp.dp=NULL)
+    ret <- list(dptab=NULL, dptabs.sex=NULL, clamp.dp=NULL)
     if (!is.null(object@depth.profile)) {
         ret$dptab <- object@depth.profile$dptab
+        ret$dptabs.sex <- object@depth.profile$dptabs.sex
         ret$clamp.dp <- object@depth.profile$clamp.dp
         ret$mean.coverage <- mean.coverage(object)
     }
