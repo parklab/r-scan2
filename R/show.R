@@ -1,6 +1,9 @@
 setMethod("show", "SCAN2", function(object) {
     cat("#", is(object)[[1]], "\n")
     cat("# r-scan2 package version:", object@package.version, "\n")
+    cat(paste0("# SCAN2 pipeline version: ", object@pipeline.version['version'],
+        ", buildnum: ", object@pipeline.version['buildnum'],
+        ", githash: ", object@pipeline.version['githash'], '\n'))
     if (!is.null(object@region)) {
         cat("#   Region:")
         if (length(object@region) > 1) {
