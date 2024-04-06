@@ -1,11 +1,12 @@
 # Spatial sensitivity applies only to VAF-based calling! Not to mutation signature-based rescue!
 # Use small tiles for parallelization (~1MB) because of basepair resolution.
-compute.spatial.sensitivity.depth <- function(single.cell.id, bulk.id,
+DEPRECATED_compute.spatial.sensitivity.depth <- function(single.cell.id, bulk.id,
     static.filter.params, joint.dptab.path, genome.string, sens.tilewidth=1e3,
     grs.for.sens=genome.string.to.tiling(genome.string, tilewidth=sens.tilewidth, group='auto'),
     grs.for.parallelization=genome.string.to.tiling(genome.string, tilewidth=1e6, group='auto'),
     quiet=TRUE, report.mem=TRUE)
 {
+    warning("THIS METHOD IS DEPRECATED! IT IS ~10x SLOWER THAN AN EQUIVALENT METHOD USING bedtools map!")
     cat('Gathering read depth data for spatial somatic calling sensitivity using', length(grs.for.parallelization), 'chunks.\n')
     cat('Parallelizing with', future::nbrOfWorkers(), 'cores.\n')
 
@@ -89,8 +90,9 @@ compute.spatial.sensitivity.depth <- function(single.cell.id, bulk.id,
 # try to prevent it. For human genomes, this means a waste of ~2-2.5G of RAM per thread.
 compute.spatial.sensitivity.abmodel <- function(
     single.cell.id, ab.fits, integrated.table.path, genome.string, sens.tilewidth=1e3,
-    grs.for.sens=genome.string.to.tiling(genome.string, tilewidth=sens.tilewidth, group='auto'),
-    grs.for.parallelization=genome.string.to.tiling(genome.string, tilewidth=10e6, group='auto'),
+    grs.for.sens,  # no longer suggest a default. these bins are externally generated
+    #grs.for.sens=genome.string.to.tiling(genome.string, tilewidth=sens.tilewidth, group='auto'),
+    grs.for.parallelization=analysis.set.tiling.for.parallelization(regions=GenomicRanges::reduce(grs.for.sens), total.tiles=10),
     quiet=TRUE, report.mem=TRUE)
 {
     cat('Estimating genome-wide AB for spatial somatic calling sensitivity using', length(grs.for.parallelization), 'chunks.\n')
@@ -153,7 +155,7 @@ compute.spatial.sensitivity.abmodel <- function(
 }
 
 
-model.somatic.sensitivity <- function(tiles, muttype=c('snv', 'indel'), alleletype=c('maj', 'min'), random.seed=0) {
+model.somatic.sensitivity <- function(tiles, muttype=c('snv', 'indel'), alleletype=c('maj', 'min'), sex.chroms=c(), random.seed=0) {
     muttype <- match.arg(muttype)
     alleletype <- match.arg(alleletype)
 
@@ -164,15 +166,20 @@ model.somatic.sensitivity <- function(tiles, muttype=c('snv', 'indel'), allelety
     bblk <- paste0('bases.gt.', muttype, '.bulk.min.dp')
     nbr <- paste0(muttype, '.n.training.neighborhood')
 
+    model.lhs <- paste0('cbind(', pstr, ', ', tstr, ' - ', pstr, ')')
+
+    # experimental: add log10(depth) to model the negative effect of extreme depth.
+    # reasonable depth values is positively related with sensitivity.  now seems to be better
+    model.rhs <- paste(
+        c('abs(gp.mu)', bsc, bblk, nbr, 'gp.sd', 'mean.sc.dp', 
+          'I(log10(1+mean.sc.dp))',
+          # recycle0 - if length(sex.chroms)=0, then paste(.) returns a 0-length result
+          paste0('is.', sex.chroms, recycle0=TRUE)),
+        collapse=" + ")
+
     # Build model
-    set.seed(random.seed)  # I believe glm is not deterministic. Just be safe.
-    form <- paste0('cbind(', pstr, ', ', tstr, ' - ', pstr, ') ~ abs(gp.mu) + ',
-        paste(c(bsc, bblk, nbr, 'gp.sd', 'mean.sc.dp', 'I(log10(1+mean.sc.dp))'), collapse=" + "))
-        #paste(c(bsc, bblk, nbr, 'gp.sd', 'mean.sc.dp'), collapse=" + "))
-        # experimental: add log10(depth) to model the negative effect of extreme depth.
-        # reasonable depth values is positively related with sensitivity.
-        # now seems to be better
-    model <- glm(form, family=binomial, data=tiles[hold.out == FALSE])
+    set.seed(random.seed)  # glm may not be deterministic. Just be safe.
+    model <- glm(paste(model.lhs, '~', model.rhs), family=binomial, data=tiles[hold.out == FALSE])
 
     # Predict on the entire data table (INCLUDING training data) and save predictions
     # to caller's table by reference.
@@ -540,101 +547,4 @@ count.somatic.sites.for.sens <- function(grs, sites, seqinfo, neighborhood.tiles
     ret[, n.neighborhood :=
         as.integer(stats::filter(n.calls, filter=rep(1, 2*neighborhood.tiles), sides=2))]
     ret
-}
-
-
-# abmodel.covs - compute.spatial.sensitivity.abmodel() output
-# depth.covs - compute.spatial.sensitivity.depth() output
-# This function doesn't use future() for multicore support, so passing the large
-# SCAN2 `object` is feasible.
-# 
-# WARNING! sens.tilewidth MUST match what was used in depth/abmodel covariate gathering
-#
-# neighborhood.tiles - calculate a rolling sum of the number of training sites using
-#   a window extending `neighborhood.tiles` upstream and downstream of a given tile.
-#   The window will be of size 1 (the center window) + 2*neighborhood.tiles.
-#   This quantifies how much data is available to the AB model in addition to the
-#   standard deviation of the Gaussian process model (gp.sd).
-#   For PTA data, covariance analysis suggests most local AB information is within
-#   10 kB. Thus, with the default sens.tilewidth=1kb, neighborhood.tiles=10 should
-#   be a reasonable default.
-integrate.spatial.sensitivity.covariates <- function(object, abmodel.covs, depth.covs,
-    sens.tilewidth=1e3, neighborhood.tiles=10,
-    grs.for.sens=genome.string.to.tiling(object@genome.string, tilewidth=sens.tilewidth, group='auto'))
-{
-    ab.data <- data.table::data.table(chr=as.character(seqnames(grs.for.sens)),
-        start=start(grs.for.sens), end=end(grs.for.sens))
-
-    cat('Counting germline training hSNP sites..\n')
-    hsnps <- count.germline.sites.for.sens(grs=grs.for.sens,
-        sites=object@gatk[training.site == TRUE & muttype == 'snv'],
-        seqinfo=genome.string.to.seqinfo.object(object@genome.string),
-        neighborhood.tiles=neighborhood.tiles)
-    colnames(hsnps) <- paste0('snv.', colnames(hsnps))
-    ab.data <- cbind(ab.data, hsnps)
-    cat('Counting somatic SNV calls..\n')
-    calls <- count.somatic.sites.for.sens(gr=grs.for.sens,
-        sites=object@gatk[pass == TRUE & muttype == 'snv'],
-        seqinfo=genome.string.to.seqinfo.object(object@genome.string),
-        neighborhood.tiles=neighborhood.tiles)
-    colnames(calls) <- paste0('snv.', colnames(calls))
-    ab.data <- cbind(ab.data, calls)
-
-
-    cat('Counting germline training het indel sites..\n')
-    hindels <- count.germline.sites.for.sens(grs=grs.for.sens,
-        sites=object@gatk[training.site == TRUE & muttype == 'indel'],
-        seqinfo=genome.string.to.seqinfo.object(object@genome.string),
-        neighborhood.tiles=neighborhood.tiles)
-    colnames(hindels) <- paste0('indel.', colnames(hindels))
-    ab.data <- cbind(ab.data, hindels)
-    cat('Counting somatic indel calls..\n')
-    calls <- count.somatic.sites.for.sens(gr=grs.for.sens,
-        sites=object@gatk[pass == TRUE & muttype == 'indel'],
-        seqinfo=genome.string.to.seqinfo.object(object@genome.string),
-        neighborhood.tiles=neighborhood.tiles)
-    colnames(calls) <- paste0('indel.', colnames(calls))
-    ab.data <- cbind(ab.data, calls)
-
-    # sort=FALSE: match the original tile ordering
-    cat("Merging with AB model covariates..\n")
-    ret <- merge(ab.data, abmodel.covs, sort=FALSE, by=c('chr', 'start', 'end'))
-    cat("Merging with depth covariates..\n")
-    ret <- merge(ret, depth.covs, sort=FALSE, by=c('chr', 'start', 'end'))
-
-    cat("Computing sensitivity models\n")
-    # Split data into two halves for later hold-out training
-    ret[, hold.out := rbinom(nrow(.SD), size=1, prob=1/2)]
-    # Each call to model.somatic.sensitivity updates `ret`.
-    # IMPORTANT: the returned model objects are HUGE (~1 GB each) because copies
-    # of the entire input dataset are retained along with several O(#rows)-sized
-    # calculations.  Recomputing these models only takes a few seconds given `ret`,
-    # so it makes very little sense to record these in the SCAN2 object.
-    models <- do.call(c,
-        lapply(c('snv', 'indel'), function(muttype)
-            lapply(c('maj', 'min'), function(alleletype)
-                model.somatic.sensitivity(tiles=ret, muttype=muttype, alleletype=alleletype)
-            )
-        )
-    )
-    names(models) <- c('snv.maj', 'snv.min', 'indel.maj', 'indel.min')
-    # As noted above, models are very large. Just store the coefficients for
-    # convenience. If the full model is desired, rerun model.somatic.sensitivity.
-    # When applied to summary(m), the coef() function returns a table of coef values
-    # as well as standard error and significance values.
-    models <- lapply(models, function(m) coef(summary(m)))
-
-    burdens <- setNames(lapply(c('snv', 'indel'), function(mt)
-        estimate.burden.by.spatial.sensitivity(data=ret, muttype=mt)),
-        c('snv', 'indel'))
-
-    object@spatial.sensitivity <- list(
-        tilewidth=sens.tilewidth,
-        neighborhood.tiles=neighborhood.tiles,
-        models=models,
-        somatic.sensitivity=somatic.sensitivity(data=ret),
-        burden=burdens,
-        data=ret
-    )
-    object
 }
