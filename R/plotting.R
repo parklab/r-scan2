@@ -221,8 +221,32 @@ setMethod("plot.region", "summary.SCAN2", function(object, site=NA, chrom=NA, po
 })
 
 
+# IMPORTANT:
+# There is no single, correct way to view the AB estimates and VAFs
+# of all sites. This is because genotyping assigns the mutation (or
+# germline het, in L-O-O mode) to the haplotype with the closest AB.
+#
+# That is, AB and VAF are not always the same: VAF always measures
+# the fraction of reads supporting the alternate allele while AB
+# can refer to the fraction of reads from either haplotype, so long
+# as it consistently refers to the same haplotype (by, e.g., phasing).
+#
+# As an example, suppose nearby het SNPs have VAFs of 0.3 and a
+# candidate mutation has VAF=0.7. Such a candidate has exactly the
+# expected VAF for a mutation on the opposite allele of the 0.3 hSNPs,
+# so the AB for the candidate mutation is set to 1-0.3 for
+# computing the various models.  
+#
+# The best way to display this seems to be:
+#   * somatic candidates are always displayed by VAF
+#   * training sites are displayed by AB
+# 
+# When recompute=FALSE:
+#   All sites (training, candidate or not) are flipped indepedently (if
+#   necessary) to best match the local AB.  This can produce plots with
+#   very unsmooth AB patterns.
 helper.plot.region <- function(gatk, ab.fits, site=NA, chrom=NA, position=NA,
-    upstream=5e4, downstream=5e4, gp.extend=1e5, n.gp.points=100, recompute=TRUE, show.all.candidates=FALSE)
+    upstream=5e4, downstream=5e4, gp.extend=1e5, n.gp.points=250, recompute=TRUE, show.all.candidates=FALSE)
 {
 
     if (!is.na(site) & (!is.na(chrom) | !is.na(position)))
@@ -230,11 +254,13 @@ helper.plot.region <- function(gatk, ab.fits, site=NA, chrom=NA, position=NA,
     if ((!is.na(chrom) & is.na(position)) | (is.na(chrom) & !is.na(position)))
         stop("both chrom and pos must be specified")
 
-    if (!missing(site)) {
+    if (!is.na(site)) {
         chrom <- gatk[site,]$chr
         position <- gatk[site,]$pos
         cat('using site', site, '\n')
         print(gatk[site,])
+    } else {
+        site <- which(gatk[,chr == chrom & pos == position])
     }
 
     # Sites at which AB was estimated in the genotyper.
@@ -244,7 +270,7 @@ helper.plot.region <- function(gatk, ab.fits, site=NA, chrom=NA, position=NA,
     # because they had reads in a different sample.
     d <- gatk[chr == chrom &
         pos >= position - upstream & pos <= position + upstream &
-        (training.site | somatic.candidate) & bulk.gt != '1/1']
+        (training.site | somatic.candidate)] # & bulk.gt != '1/1']
 
     # Recompute does a better job of showing the model, but it does
     # cost some CPU.
@@ -258,11 +284,22 @@ helper.plot.region <- function(gatk, ab.fits, site=NA, chrom=NA, position=NA,
                     d$position)
         est.at <- sort(unique(est.at))
         fit.chr <- ab.fits[chrom,,drop=FALSE]
-        newdt <- gatk[training.site == TRUE & chr == chrom]
+        newdt <- gatk[training.site == TRUE & muttype == 'snv' & chr == chrom]
         # infer.gp requires hsnps to have hap1 and hap2 columns
         newdt[, c('hap1', 'hap2') := list(phased.hap1, phased.hap2)]
         gp <- infer.gp1(ssnvs=data.frame(chr=chrom, pos=est.at),
             fit=fit.chr, hsnps=newdt, flank=gp.extend, max.hsnps=150)
+
+        # sign is + if gp.mu in the table has the same sign as the "matched" gp.mu
+        # sign is - if match.ab() decided to flip gp.mu
+        sign <- sign(match.ab(af=gatk[site,af], gp.mu=gatk[site,gp.mu]) * gatk[site,gp.mu])
+        gp[,'gp.mu'] <- sign * gp[,'gp.mu']
+        if (sign == -1) {
+            # reflect all training sites *except* the target site
+            d[training.site==TRUE & chr==chrom & pos != position, c('af', 'phased.hap1', 'phased.hap2') :=
+                list(1-af, phased.hap2, phased.hap1)]
+        }
+
         gp <- data.frame(chr=chrom, pos=est.at, ab=1/(1+exp(-gp[,'gp.mu'])), gp)
     } else {
         # Rely on precomputed GP mu/sd (relevant for ALLSITES mode)
@@ -279,10 +316,11 @@ helper.plot.region <- function(gatk, ab.fits, site=NA, chrom=NA, position=NA,
     plot.gp.confidence(df=gp, add=FALSE,
         xlab=paste('Chrom', d$chr[1], 'position'),
         ylab='Allele fraction',
-        main=title)
+        main=title, xaxs='i')
     points(d[training.site==TRUE]$pos,
         d[training.site==TRUE, phased.hap1/(phased.hap1+phased.hap2)],
-        pch=20, cex=1, col=1, ylim=c(-0.2,1))
+        pch=ifelse(d[training.site==TRUE]$muttype == 'snv', 20, 1),
+        cex=1, col=1, ylim=c(-0.2,1))
 
     # 5*max : restrict the depth to the bottom 20% of plot
     lines(d$pos, d$dp/(5*max(d$dp)), type='h', lwd=2)
@@ -306,13 +344,13 @@ helper.plot.region <- function(gatk, ab.fits, site=NA, chrom=NA, position=NA,
     }
 
     if (show.all.candidates) {
-        legend('topright', legend=c('Training hSNP', 'Candidate', 'Target site'),
-            pch=c(20,20,4), col=1:3, pt.cex=c(1,1.5,1.5), bty='n')
+        legend('topright', legend=c('Training hSNP', 'Germline hIndel', 'Candidate', 'Target site'),
+            pch=c(20,1,20,4), col=c(1, 1:3), pt.cex=c(1, 1,1.5,1.5), bty='n')
         # plot everything except the requested site
-        points(d[pos != position & somatic.candidate == TRUE, .(pos, af)], pch=20, col=2)
+        points(d[pos != position & somatic.candidate == TRUE, .(pos, af)], pch=20, col=2, cex=1.5)
     } else { 
-        legend('topright', legend=c('Training hSNP', 'Target site'),
-            pch=c(20,4), col=c(1,3), pt.cex=c(1,1.5))
+        legend('topright', legend=c('Training hSNP', 'Germline hIndel', 'Target site'),
+            pch=c(20,1,4), col=c(1,1,3), pt.cex=c(1,1,1.5))
     }
 }
 
@@ -468,14 +506,14 @@ setMethod('plot.sensitivity', 'summary.SCAN2', function(object, min.tiles=150) {
 # tilewidth=1kb by default. the het germline SNP rate in humans is about 1/1.5kb. so
 # to get a min. genomic region containing roughly ~100 hSNPs, need 150kb = 150 tiles.
 helper.plot.sensitivity <- function(maj, min, main, min.tiles=150) {
-        #maj <- assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='maj')
-        #min <- assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='min')
-        plot(maj[n > min.tiles, .(pred, sens)], lwd=2, type='b', pch=20, col=1, main=main, ylim=0:1,
-            xlab="Predicted sensitivity based on local covariates",
-            ylab='Actual sensitivity for germline het sites')
-        lines(min[n > min.tiles, .(pred, sens)], lwd=2, type='b', pch=20, col=2)
-        abline(coef=0:1)
-        legend('topleft', lwd=2, col=1:2, legend=c("Major allele", 'Minor allele'))
+    #maj <- assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='maj')
+    #min <- assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='min')
+    plot(maj[n > min.tiles, .(pred, sens)], lwd=2, type='b', pch=20, col=1, main=main, ylim=0:1,
+        xlab="Predicted sensitivity based on local covariates",
+        ylab='Actual sensitivity for germline het sites')
+    lines(min[n > min.tiles, .(pred, sens)], lwd=2, type='b', pch=20, col=2)
+    abline(coef=0:1)
+    legend('topleft', lwd=2, col=1:2, legend=c("Major allele", 'Minor allele'))
 }
 
 
@@ -495,7 +533,7 @@ setGeneric('plot.sensitivity.covs', function(object, covs, muttype=c('snv', 'ind
     standardGeneric('plot.sensitivity.covs'))
 setMethod('plot.sensitivity.covs', 'SCAN2',
     function(object, covs, muttype=c('snv', 'indel'), min.tiles=150) {
-    tab <- rbindlist(lapply(covs, assess.covariate, object=object, min.tiles=min.tiles))
+    tab <- rbindlist(lapply(covs, function(cov) assess.covariate(object=object, cov=cov)[n.tiles >= min.tiles]))
     if (missing(covs))
         covs <- unique(tab$cov.name)
     else
@@ -643,21 +681,33 @@ helper.plot.mutburden <- function(tab) {
 }
 
 
-plot.binned.counts <- function(binned.counts, sample.name) {
+plot.binned.counts <- function(binned.counts, sample.name, type=c('count', 'ratio', 'ratio.gcnorm', 'cnv'), ...) {
     chrs.in.order <- binned.counts[!duplicated(chr)]$chr
+    type <- match.arg(type)
 
     colmap <- setNames(head(rep(c('black','#666666'), length(chrs.in.order)), length(chrs.in.order)),
         chrs.in.order)
 
     par(mar=c(1/2,4,1/2,1))
-    plot(log2(binned.counts$ratio.gcnorm),
-        ylim=c(-3,3), col=colmap[binned.counts$chr], pch=20, cex=1/2,
+    if (type == 'cnv')
+        points <- binned.counts[['garvin.ratio.gcnorm.ploidy']]
+    else
+        points <- binned.counts[[type]]
+
+    if (type == 'ratio' || type == 'ratio.gcnorm')
+        points <- log2(points)
+
+    plot(points,
+        col=colmap[binned.counts$chr], pch=20, cex=1/2,
         xaxt='n', xaxs='i',
-        ylab='log2(read depth ratio)')
-    lines(log2(binned.counts$garvin.seg), lwd=2, col=2)
+        ylab='log2(read depth ratio)', ...)
     abline(v=which(c(binned.counts$chr, NA) != c(NA, binned.counts$chr)), col='#AAAAAA')
 
     axis.posns <- c(0, cumsum(binned.counts[,.(pos=nrow(.SD)),by=chr]$pos))
     text(y=-3.25, x=axis.posns[-length(axis.posns)] + diff(axis.posns)/2, labels=chrs.in.order, pos=3)
     legend('topleft', bty='n', legend=sample.name)
+
+    if (type == 'cnv' && 'garvin.seg.integer' %in% names(binned.counts)) {
+        lines(binned.counts$garvin.seg.integer, lwd=2, col=2)
+    }
 }
