@@ -88,8 +88,7 @@ testpipe <- function(test.data=c('legacy_tiny', 'legacy_chr22', 'legacy_custom')
         dummy.object <- make.scan(config.path=config.yaml)
         x <- make.integrated.table(dummy.object=dummy.object,
             mmq60.tab=mmq60, mmq1.tab=mmq1,
-            phased.vcf=phased.vcf, panel=panel,
-            tilewidth.for.parallelization=tilewidth)
+            phased.vcf=phased.vcf, panel=panel)
         write.integrated.table(inttab=x$gatk, out.tab=int.tab.path, out.tab.gz=int.tab.gz.path)
     } else {
         cat("Using prebuilt integrated table. Use rebuild.integrated.table=TRUE to test table integration code.\n")
@@ -102,7 +101,6 @@ testpipe <- function(test.data=c('legacy_tiny', 'legacy_chr22', 'legacy_custom')
         int.tab=int.tab.gz.path, abfits=abfits,
         sccigars=sccigars, bulkcigars=bulkcigars,
         trainingcigars=trainingcigars, dptab=dptab,
-        tilewidth.for.parallelization=tilewidth,
         verbose=FALSE)
 
     # Using old files (particularly CIGAR op count tables) allows comparison
