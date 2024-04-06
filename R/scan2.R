@@ -10,6 +10,7 @@ setClassUnion('null.or.character', c('NULL', 'character'))
 # to combine the slots properly.
 setClass("SCAN2", slots=c(
     package.version='null.or.character',
+    pipeline.version='null.or.character',
     config='null.or.list',
     region='null.or.GRanges',
     analysis.regions='null.or.GRanges',
@@ -85,7 +86,11 @@ get.rscan2.version <- function() {
 #       1. a path to the .yaml file or
 #       2. the parsed list stored in another SCAN2 object's @config slot
 # Only one of the above two methods can be used.
-make.scan <- function(config, config.path, single.cell='NOT_SPECIFIED_BY_USER', region=NULL) {
+# "Pipeline" versioning refers to the external snakemake pipeline that
+# prepares input for the R SCAN2 library to analyze.
+make.scan <- function(config, config.path, single.cell='NOT_SPECIFIED_BY_USER', region=NULL,
+    pipeline.version=NA, pipeline.buildnum=NA, pipeline.githash=NA)
+{
     if (!missing(config) & !missing(config.path))
         stop('only one of `config` or `config.path` can be specified, but was called with both')
 
@@ -95,11 +100,17 @@ make.scan <- function(config, config.path, single.cell='NOT_SPECIFIED_BY_USER', 
 
     # Single cells may be missing from the amplification list.
     amplification <- toupper(config$amplification[single.cell])
-    if (is.null(amplification))
+    # toupper() converts NULL -> "NULL"
+    if (amplification == "NULL")
         amplification <- 'UNKNOWN'
 
     object <- new("SCAN2",
         package.version=get.rscan2.version(),
+        pipeline.version=c(
+            # Need as.character in case no version info supplied: (NA,NA,NA) is type=logical
+            version=as.character(pipeline.version),
+            buildnum=as.character(pipeline.buildnum),
+            githash=as.character(pipeline.githash)),
         config=config,
         sex=tolower(config$sex),
         amplification=amplification,
@@ -148,13 +159,17 @@ parse.static.filter.params <- function(config) {
 
 
 # Format of GATK intervals: chrom:start-end
+# positions are 1-indexed, inclusive on both sides
 parse.analysis.regions.to.granges <- function(config) {
     split1 <- strsplit(config$analysis_regions, ':')
     split2 <- strsplit(sapply(split1, `[`, 2), '-')
+
     # reduce(): the full range data is still stored in config if needed later
-    reduce(GRanges(seqnames=sapply(split1, `[`, 1),
-        ranges=IRanges(start=as.integer(sapply(split2, `[`, 1)),
-                       end=as.integer(sapply(split2, `[`, 2)))))
+    GenomicRanges::reduce(GenomicRanges::GRanges(
+        seqnames=sapply(split1, `[`, 1),
+        ranges=IRanges::IRanges(start=as.integer(sapply(split2, `[`, 1)),
+                                end=as.integer(sapply(split2, `[`, 2))),
+        seqinfo=genome.string.to.seqinfo.object(config$genome)))
 }
 
 
@@ -273,7 +288,10 @@ setMethod("concat", signature="SCAN2", function(...) {
     init <- args[[1]]
 
     ret <- make.scan(config=init@config, single.cell=init@single.cell,
-        region=reduce(do.call(c, lapply(args, function(a) a@region))))
+        region=reduce(do.call(c, lapply(args, function(a) a@region))),
+        pipeline.version=init@pipeline.version['version'],
+        pipeline.buildnum=init@pipeline.version['buildnum'],
+        pipeline.githash=init@pipeline.version['githash'])
 
     # rbindlist quickly concatenates data.tables
     ret@gatk <- rbindlist(lapply(args, function(a) a@gatk))
@@ -365,9 +383,12 @@ setMethod("concat", signature="SCAN2", function(...) {
     }
 
     # policy: ab.fits has to be the same for all chunks being concat()ed
-    # if that's true, just use the first one
-    if (any(sapply(args, function(a) any(as.matrix(init@ab.fits) != as.matrix(a@ab.fits)))))
-        stop('@ab.fits must be identical for all concat() elements')
+    # if that's true, just use the first one. don't try to as.matrix() a
+    # NULL slot.
+    if (!all(sapply(args, function(a) is.null(a@ab.fits)))) {
+        if (any(sapply(args, function(a) any(as.matrix(init@ab.fits) != as.matrix(a@ab.fits)))))
+            stop('@ab.fits must be identical for all concat() elements')
+    }
     ret@ab.fits <- init@ab.fits
 
     ret@ab.estimates <- data.frame(sites=sum(sapply(args, function(a) ifelse(is.null(a@ab.estimates), 0, a@ab.estimates$sites))))
@@ -486,39 +507,73 @@ setMethod("compute.ab.fits", "SCAN2", function(object, path, chroms, #=1:22,
 # which AB is being estimated. For sites at the edge of each chunk, data
 # either upstream or downstream will not be available. To solve this,
 # training data must be read in AGAIN with the 100kb flanking regions added.
-setGeneric("compute.ab.estimates", function(object, quiet=FALSE)
+#
+# path - if not NULL, then assumes the file contains already-computed AB
+#        estimates in a bgzipped, tabix-indexed file.
+setGeneric("compute.ab.estimates", function(object, path=NULL, quiet=FALSE)
     standardGeneric("compute.ab.estimates"))
-setMethod("compute.ab.estimates", "SCAN2", function(object, quiet=FALSE) {
+setMethod("compute.ab.estimates", "SCAN2", function(object, path=NULL, quiet=FALSE)
+{
     check.slots(object, c('gatk', 'ab.fits'))
 
-    training.hsnps <- get.training.sites.for.abmodel(object=object,
-        region=object@region, integrated.table.path=object@integrated.table.path, quiet=quiet)
+    if (is.null(path)) {
+        training.hsnps <- get.training.sites.for.abmodel(object=object,
+            region=object@region, integrated.table.path=object@integrated.table.path, quiet=quiet)
 
-    ab <- compute.ab.given.sites.and.training.data(
-        sites=object@gatk[,.(chr,pos,refnt,altnt)],
-        training.hsnps=training.hsnps,
-        ab.fits=object@ab.fits, quiet=quiet)
+        ab <- compute.ab.given.sites.and.training.data(
+            sites=object@gatk[,.(chr,pos,refnt,altnt)],
+            training.hsnps=training.hsnps,
+            ab.fits=object@ab.fits, quiet=quiet)
+    } else {
+        ab <- read.tabix.data(path=path, region=object@region, quiet=quiet)
+        # Extra sanity test to ensure read-in data matches the table in this object
+        if (nrow(ab) != nrow(object@gatk) || any(ab$chr != object@gatk$chr))
+            stop('AB estimates file', path, 'does not exactly match internal table chromosomes')
+        if (nrow(ab) != nrow(object@gatk) || any(ab$pos != object@gatk$pos))
+            stop('AB estimates file', path, 'does not exactly match internal table positions')
+        if (nrow(ab) != nrow(object@gatk) || any(ab$refnt != object@gatk$refnt))
+            stop('AB estimates file', path, 'does not exactly match internal table refnt')
+        if (nrow(ab) != nrow(object@gatk) || any(ab$altnt != object@gatk$altnt))
+            stop('AB estimates file', path, 'does not exactly match internal table altnt')
+    }
 
     # Add an extra 'ab' column that transforms gp.mu (-Inf, Inf) -> [0, 1]
     object@gatk[, c('ab', 'gp.mu', 'gp.sd') := 
-        list(1/(1+exp(-ab[,'gp.mu'])), ab[,'gp.mu'], ab[,'gp.sd'])]
+        list(1/(1+exp(-ab$gp.mu)), ab$gp.mu, ab$gp.sd)]
     object@ab.estimates <- data.frame(sites=nrow(ab))
     object
 })
 
 
 
-setGeneric("compute.models", function(object, verbose=TRUE)
+# path - if not NULL, then assumes the file contains already-computed model
+#        estimates in a bgzipped, tabix-indexed file.
+setGeneric("compute.models", function(object, path=NULL, verbose=TRUE)
     standardGeneric("compute.models"))
-setMethod("compute.models", "SCAN2", function(object, verbose=TRUE) {
+setMethod("compute.models", "SCAN2", function(object, path=NULL, verbose=TRUE)
+{
     check.slots(object, c('gatk', 'ab.estimates'))
 
-    if (nrow(object@gatk) > 0) {
-        matched.gp.mu <- match.ab(af=object@gatk$af, gp.mu=object@gatk$gp.mu)
-        pvb <- compute.pvs.and.betas(object@gatk$scalt, object@gatk$dp,
-                                    matched.gp.mu, object@gatk$gp.sd, verbose=verbose)
+    if (is.null(path)) {
+        if (nrow(object@gatk) > 0) {
+            matched.gp.mu <- match.ab(af=object@gatk$af, gp.mu=object@gatk$gp.mu)
+            pvb <- compute.pvs.and.betas(object@gatk$scalt, object@gatk$dp,
+                                        matched.gp.mu, object@gatk$gp.sd, verbose=verbose)
+        } else {
+            pvb <- data.table(abc.pv=numeric(0), lysis.pv=numeric(0), lysis.beta=numeric(0), mda.pv=numeric(0), mda.beta=numeric(0))
+        }
     } else {
-        pvb <- data.table(abc.pv=numeric(0), lysis.pv=numeric(0), lysis.beta=numeric(0), mda.pv=numeric(0), mda.beta=numeric(0))
+        pvb <- read.tabix.data(path=path, region=object@region, quiet=!verbose)
+        # Extra sanity test to ensure read-in data matches the table in this object
+        if (nrow(pvb) != nrow(object@gatk) || any(pvb$chr != object@gatk$chr))
+            stop('model file', path, 'does not exactly match internal table chromosomes')
+        if (nrow(pvb) != nrow(object@gatk) || any(pvb$pos != object@gatk$pos))
+            stop('model file', path, 'does not exactly match internal table positions')
+        if (nrow(pvb) != nrow(object@gatk) || any(pvb$refnt != object@gatk$refnt))
+            stop('model file', path, 'does not exactly match internal table refnt')
+        if (nrow(pvb) != nrow(object@gatk) || any(pvb$altnt != object@gatk$altnt))
+            stop('model file', path, 'does not exactly match internal table altnt')
+        pvb <- pvb[,.(abc.pv, lysis.pv, lysis.beta, mda.pv, mda.beta)]
     }
 
     object@gatk[, c('abc.pv', 'lysis.pv', 'lysis.beta', 'mda.pv', 'mda.beta') := pvb]
@@ -529,8 +584,8 @@ setMethod("compute.models", "SCAN2", function(object, verbose=TRUE) {
 
 setGeneric("compute.fdr.prior.data", function(object, mode=c('legacy', 'new'), quiet=FALSE)
     standardGeneric("compute.fdr.prior.data"))
-setMethod("compute.fdr.prior.data", "SCAN2", function(object, mode=c('legacy', 'new'), quiet=FALSE) {
-    # to a chunked SCAN2 object (these are used for parallelization).
+setMethod("compute.fdr.prior.data", "SCAN2", function(object, mode=c('legacy', 'new'), quiet=FALSE)
+{
     check.slots(object, c('gatk', 'static.filter.params'))
     # ALL candidates must be present for FDR estimation. So this function cannot be applied
     # to a chunked SCAN2 object (these are used for parallelization).
@@ -581,7 +636,8 @@ setMethod("compute.fdr.prior.data", "SCAN2", function(object, mode=c('legacy', '
 
 setGeneric("compute.fdr", function(object, path, mode=c('legacy', 'new'), quiet=FALSE)
     standardGeneric("compute.fdr"))
-setMethod("compute.fdr", "SCAN2", function(object, path, mode=c('legacy', 'new'), quiet=FALSE) {
+setMethod("compute.fdr", "SCAN2", function(object, path, mode=c('legacy', 'new'), quiet=FALSE)
+{
     mode <- match.arg(mode)
 
     check.slots(object, c('gatk', 'ab.estimates', 'mut.models'))
@@ -654,7 +710,8 @@ setMethod("compute.fdr", "SCAN2", function(object, path, mode=c('legacy', 'new')
 #               is necessary.
 setGeneric("compute.static.filters", function(object, mode=c('new', 'legacy'))
         standardGeneric("compute.static.filters"))
-setMethod("compute.static.filters", "SCAN2", function(object, mode=c('new', 'legacy')) {
+setMethod("compute.static.filters", "SCAN2", function(object, mode=c('new', 'legacy'))
+{
     check.slots(object, c('gatk', 'cigar.data', 'mut.models'))
     mode <- match.arg(mode)
 
@@ -826,6 +883,101 @@ setMethod("add.binned.counts", "SCAN2", function(object, sc.path, bulk.path, gc.
         sc=read.binned.counts(bin.path=sc.path, gc.path=gc.path),
         bulk=read.binned.counts(bin.path=bulk.path, gc.path=gc.path)
     )
+    object
+})
+
+
+# neighborhood.tiles - calculate a rolling sum of the number of training sites using
+#   a window extending `neighborhood.tiles` upstream and downstream of a given tile.
+#   The window will be of size 1 (the center window) + 2*neighborhood.tiles.
+#   This quantifies how much data is available to the AB model in addition to the
+#   standard deviation of the Gaussian process model (gp.sd).
+#   For PTA data, covariance analysis suggests most local AB information is within
+#   10 kB. Thus, with the default sens.tilewidth=1kb, neighborhood.tiles=10 should
+#   be a reasonable default.
+setGeneric("add.sensitivity.covariates", function(object, abmodel.covs.path, depth.covs.path, neighborhood.tiles=10)
+        standardGeneric("add.sensitivity.covariates"))
+setMethod("add.sensitivity.covariates", "SCAN2", function(object, abmodel.covs.path, depth.covs.path, neighborhood.tiles=10)
+{
+    cov.data <- cbind(read.tabix.data(abmodel.covs.path),
+        read.tabix.data(depth.covs.path)[,-(1:3)])
+
+    # Add an extra indicator variable for each sex chromosome.  This allows
+    # sex chroms to be analyzed along with autosomes despite likely differences
+    # in sensitivity.  There is one indicator per sex chrom to reflect:
+    #
+    #   for females: chrX is diploid and any data on chrY is likely noise
+    #   for males: although chrX and chrY are both haploid, chrY seems to
+    #       have very serious alignment problems and relatively few het SNPs
+    #       to act as training sites.
+    for (sex.chrom in get.sex.chroms(object)) {
+        cov.data[[paste0('is.', sex.chrom)]] <- cov.data$chr == sex.chrom
+    }
+
+    sens.regions <- GenomicRanges::GRanges(seqnames=cov.data$chr,
+        ranges=IRanges::IRanges(start=cov.data$start, cov.data$end),
+        seqinfo=genome.string.to.seqinfo.object(object@genome.string))
+
+    for (mt in c('snv', 'indel')) {
+        cat('Counting germline training', mt, 'sites..\n')
+        hets <- count.germline.sites.for.sens(grs=sens.regions,
+            sites=object@gatk[training.site == TRUE & muttype == mt],
+            seqinfo=genome.string.to.seqinfo.object(object@genome.string),
+            neighborhood.tiles=neighborhood.tiles)
+        colnames(hets) <- paste0(mt, '.', colnames(hets))
+        cov.data <- cbind(cov.data, hets)
+
+        cat('Counting somatic', mt, 'calls..\n')
+        calls <- count.somatic.sites.for.sens(gr=sens.regions,
+            sites=object@gatk[pass == TRUE & muttype == mt],
+            seqinfo=genome.string.to.seqinfo.object(object@genome.string),
+            neighborhood.tiles=neighborhood.tiles)
+        colnames(calls) <- paste0(mt, '.', colnames(calls))
+        cov.data <- cbind(cov.data, calls)
+    }
+
+    object@spatial.sensitivity <- list(
+        data=cov.data,
+        tilewidth=cov.data[1,end-start+1],
+        neighborhood.tiles=neighborhood.tiles
+    )
+    object
+})
+
+
+setGeneric("compute.sensitivity.models", function(object) standardGeneric("compute.sensitivity.models"))
+setMethod("compute.sensitivity.models", "SCAN2", function(object) {
+    data <- object@spatial.sensitivity$data
+
+    # Split data into two halves for later hold-out training
+    data[, hold.out := rbinom(nrow(.SD), size=1, prob=1/2)]
+
+    # Each call to model.somatic.sensitivity updates `ret`.
+    # IMPORTANT: the returned model objects are HUGE (~1 GB each) because copies
+    # of the entire input dataset are retained along with several O(#rows)-sized
+    # calculations.  Recomputing these models only takes a few seconds given `ret`,
+    # so only record the final coefficients (and the predictions, which are added
+    # to `data` by reference).
+    cat("Computing models..\n")
+    models <- setNames(do.call(c,
+        lapply(c('snv', 'indel'), function(muttype)
+            lapply(c('maj', 'min'), function(alleletype)
+                coef(summary(model.somatic.sensitivity(tiles=data, muttype=muttype, alleletype=alleletype, sex.chroms=get.sex.chroms(object))))
+        ))
+    ), c('snv.maj', 'snv.min', 'indel.maj', 'indel.min'))
+
+    cat("Inferring burden..\n")
+    burdens <- setNames(lapply(c('snv', 'indel'), function(mt)
+        estimate.burden.by.spatial.sensitivity(data=data, muttype=mt)),
+        c('snv', 'indel'))
+
+    cat("Summarizing..\n")
+    ss <- somatic.sensitivity(data=data)
+
+    object@spatial.sensitivity$models <- models
+    object@spatial.sensitivity$somatic.sensitivity <- ss
+    object@spatial.sensitivity$burden <- burdens
+
     object
 })
 
