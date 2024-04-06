@@ -5,13 +5,16 @@
 # have the same mutation rate as autosomes. E.g., the sequestration
 # of X chromosomes into Barr bodies could plausibly affect their
 # mutation rates.
+#
+# IMPORTANT!! Assumes male X, Y are haploid and female X is diploid.
+# One day, this could be better handled by copy number prediction.
 setGeneric("compute.mutburden", function(object, gbp.per.genome=get.gbp.by.genome(object), quiet=FALSE)
         standardGeneric("compute.mutburden"))
 setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.by.genome(object), quiet=FALSE) {
     check.slots(object, c('call.mutations', 'depth.profile'))
 
-    autosome.names <- genome.string.to.chroms(object@genome.string, group='auto')
-    sex.chrom.names <- genome.string.to.chroms(object@genome.string, group='sex')
+    autosome.names <- get.autosomes(object)
+    sex.chrom.names <- get.sex.chroms(object)
 
     muttypes <- c('snv', 'indel')
     object@mutburden <- setNames(lapply(muttypes, function(mt) {
@@ -26,15 +29,28 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
             somatic=object@gatk[chr %in% autosome.names & pass == TRUE & muttype == mt],
             sfp=object@static.filter.params[[mt]],
             dptab=object@depth.profile$dptab,
-            gbp.per.genome=gbp.per.genome)
+            copy.number=2,
+            haploid.gbp=gbp.per.genome)   # gbp.per.genome() is already in haploid gbp
 
         # sex chromosome burden
-        ret.sex <- compute.mutburden.helper(
-            germline=object@gatk[chr %in% sex.chrom.names & resampled.training.site == TRUE & muttype == mt],
-            somatic=object@gatk[chr %in% sex.chrom.names & pass == TRUE & muttype == mt],
-            sfp=object@static.filter.params[[mt]],
-            dptab=object@depth.profile$dptab.sex,
-            gbp.per.genome=gbp.per.genome)
+        # each sex chromosome is analyzed separately. for females, there is a ploidy
+        # difference; for males, chrY seems to be very poorly aligned (number of hom.
+        # SNPs is very low even though all germline SNPs should be hom.; there are
+        # many-fold more "heterozygous" germline SNPs, indicative of artifactual
+        # alignments.
+        sex.copy.number <- ifelse(object@sex == 'male', 1, 2)
+        # N.B. rely on users to ignore chrY in females to invalidate mutburden rather than
+        # adjusting copy number.
+        ret.sex <- setNames(lapply(sex.chrom.names, function(sex.chrom) {
+            compute.mutburden.helper(
+                germline=object@gatk[chr == sex.chrom & resampled.training.site == TRUE & muttype == mt],
+                somatic=object@gatk[chr == sex.chrom & pass == TRUE & muttype == mt],
+                sfp=object@static.filter.params[[mt]],
+                dptab=object@depth.profile$dptabs.sex[[sex.chrom]],
+                copy.number=sex.copy.number,
+                # the seqinfo object length is not adjusted for diploid/haploid status
+                haploid.gbp=sex.copy.number * seqlengths(object@genome.seqinfo[sex.chrom])/1e9)
+        }), sex.chrom.names)
 
         # Add the estimate based only on comparing VAF distns of germline
         # sites and candidate somatics for comparison.  This estimate is often
@@ -42,7 +58,6 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
         # N.B.: burden[2] is the maximum burden; the minimum burden [1] is almost always ~0
         list(pre.genotyping.burden=object@fdr.prior.data[[mt]]$burden[2],
             autosome.chroms=autosome.names,
-            sex.chroms=sex.chrom.names,
             autosomal=ret.auto,
             sex=ret.sex)
     }), muttypes)
@@ -84,7 +99,7 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
 # and somatic mutations are equally affected by the min depth reqs. So if
 # parts of the middle 50% are excluded by min depth reqs, this will be
 # reflected in the sensitivity estimates.
-compute.mutburden.helper <- function(germline, somatic, sfp, dptab, gbp.per.genome) {
+compute.mutburden.helper <- function(germline, somatic, sfp, dptab, copy.number, haploid.gbp) {
     reason <- ''
 
     # these computations rely on there being a reasonably large number
@@ -100,7 +115,7 @@ compute.mutburden.helper <- function(germline, somatic, sfp, dptab, gbp.per.geno
         )[c(1,1,1),]  # repeat row 1 3 times
     } else {
         # (single cell  x  bulk) depth table
-        dptab <- dptab[1:min(max(g$dp)+1, nrow(dptab)),]
+        dptab <- dptab[1:min(max(germline$dp)+1, nrow(dptab)),]
 
         # Break data into 4 quantiles based on depth, use the middle 2 (i.e.,
         # middle 50%) to reduce noise caused by very low and very high depth.
@@ -116,7 +131,7 @@ compute.mutburden.helper <- function(germline, somatic, sfp, dptab, gbp.per.geno
             reason <- paste0('could not create ', q, ' depth quantiles on germline sites; likely >25% of germline sites have depth=0')
             warning(paste('could not derive unique breakpoints for quartiles of sequencing depth at germline hSNPs.  this usually indicates that sequencing depth is heavily skewed toward low depths (typically DP=0)\ngot qbreaks = ', deparse(qbreaks)))
         } else {
-            # s also uses g-based depth quantiles
+            # somatic also uses germline-based depth quantiles
             somatic$dpq <- cut(somatic$dp, qbreaks, include.lowest=T, labels=F)
             somatic$dpq[somatic$dpq==3] <- 2 # merge 25-75% into a single bin
             germline$dpq <- cut(germline$dp, qbreaks, include.lowest=T, labels=F)
@@ -146,10 +161,13 @@ compute.mutburden.helper <- function(germline, somatic, sfp, dptab, gbp.per.geno
     # depth cutoffs as somatic candidates. Detailed depth tables will be used
     # to ensure extrapolation to the rest of the genome is equitable.
     ret$callable.burden <- ret$ncalls / ret$callable.sens
-    # dividing by 2 makes it haploid gb
-    ret$rate.per.gb <- ret$callable.burden / ret$callable.bp * 1e9/2
-    ret$burden <- ret$rate.per.gb * gbp.per.genome
-    ret$somatic.sens <- ret$ncalls / ret$burden
+    # the number of somatic mutations available to call depends on how many copies
+    # of the DNA are there to be mutated/analyzed.
+    ret$copy.number <- copy.number
+    # dividing by copy.number (i.e., 2 for autosomes) converts the rate to haploid gb. 
+    ret$rate.per.gb <- ret$callable.burden / ret$callable.bp * 1e9/copy.number
+    ret$burden <- ret$rate.per.gb * gbp
+    ret$somatic.sens <- sum(ret$ncalls) / ret$burden
 
     ret$unsupported.filters <- sfp$max.bulk.alt > 0 |
         # these filters are set to 1 by default, which means they do nothing and
