@@ -404,14 +404,6 @@ compute.fdr.prior.data.for.candidates <- function(candidates, hsnps, bins=20, ra
                 list(germ.df=germ.df, som.df=som.df)
             })
 
-            #fcs <- future.apply::future_lapply(c(0:max.dp,NA), function(thisdp) {
-                #if (is.na(thisdp)) {
-                    #germ.df <- hsnps[dp > max.dp]
-                    #som.df <- candidates[dp > max.dp]
-                #} else {
-                    #germ.df <- hsnps[dp == thisdp]
-                    #som.df <- candidates[dp == thisdp]
-                #}
             fcs <- future.apply::future_lapply(hsnps.by.depth, function(thisdp) {
                 ret <- fcontrol(germ.df=thisdp$germ.df, som.df=thisdp$som.df, bins=bins, eps=eps, quiet=quiet)
                 if (!quiet) p()
