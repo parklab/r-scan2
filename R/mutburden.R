@@ -166,7 +166,7 @@ compute.mutburden.helper <- function(germline, somatic, sfp, dptab, copy.number,
     ret$copy.number <- copy.number
     # dividing by copy.number (i.e., 2 for autosomes) converts the rate to haploid gb. 
     ret$rate.per.gb <- ret$callable.burden / ret$callable.bp * 1e9/copy.number
-    ret$burden <- ret$rate.per.gb * gbp
+    ret$burden <- ret$rate.per.gb * haploid.gbp
     ret$somatic.sens <- sum(ret$ncalls) / ret$burden
 
     ret$unsupported.filters <- sfp$max.bulk.alt > 0 |
