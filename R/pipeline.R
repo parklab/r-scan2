@@ -166,7 +166,7 @@ run.pipeline <- function(object, int.tab, abfits, sccigars, bulkcigars, training
     }
 
     pc <- perfcheck('compute.static.filters',
-        chunked.object <- compute.static.filters(object=x, mode=mode), report.mem=report.mem)
+        x <- compute.static.filters(object=x, mode=mode), report.mem=report.mem)
     cat(pc, '\n')
 
     pc <- perfcheck('compute.fdr.prior.data',
