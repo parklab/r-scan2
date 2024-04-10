@@ -123,22 +123,35 @@ setMethod("update.static.filter.params", "SCAN2", function(object, fdr.prior.mod
 # Get some useful metrics about how many mutations were called in `object` and
 # how the total mutation burden was estimated.
 vary.get.metrics <- function(object, param.name, param.value) {
-    snv.total.resampled <- nrow(object@gatk[muttype == 'snv' & resampled.training.site == TRUE])
-    indel.total.resampled <- nrow(object@gatk[muttype == 'indel' & resampled.training.site == TRUE])
+    snv.total.resampled <- object@gatk[, sum(muttype == 'snv' & resampled.training.site == TRUE, na.rm=TRUE)]
+    indel.total.resampled <- object@gatk[, sum(muttype == 'indel' & resampled.training.site == TRUE, na.rm=TRUE)]
 
     cm <- object@call.mutations
     mb <- object@mutburden
+
+    sex.cols <- do.call(cbind, lapply(seq_along(mb$snv$sex), function(i) {
+        tab <- mb$snv$sex[[i]]
+        colnames(tab) <- paste(colnames(tab), names(mb$snv$sex)[i], sep='.')
+        tab[2,,drop=FALSE]
+    }))
     snv.tab <- cbind(data.table(muttype='snv',
         n.pass=cm$snv.pass,
         n.resampled.training.pass=cm$snv.resampled.training.pass,
         total.resampled=snv.total.resampled),
-        as.data.table(mb$snv[2,,drop=FALSE]))
+        as.data.table(mb$snv$autosomal[2,,drop=FALSE]),
+        sex.cols)
 
+    sex.cols <- do.call(cbind, lapply(seq_along(mb$indel$sex), function(i) {
+        tab <- mb$indel$sex[[i]]
+        colnames(tab) <- paste(colnames(tab), names(mb$indel$sex)[i], sep='.')
+        tab[2,,drop=FALSE]
+    }))
     indel.tab <- cbind(data.table(muttype='indel',
         n.pass=cm$indel.pass,
         n.resampled.training.pass=cm$indel.resampled.training.pass,
         total.resampled=indel.total.resampled),
-        as.data.table(mb$snv[2,,drop=FALSE]))
+        as.data.table(mb$indel$autosomal[2,,drop=FALSE]),
+        sex.cols)
 
     ret <- rbind(snv.tab, indel.tab)
     # not sure how to set name programatically, so create a table and update the name
@@ -191,34 +204,38 @@ vary.static.filter.param <- function(object, param.name, param.values, new.param
     if (make.copy)
         object.copy <- copy(object)
 
-    progressr::with_progress({
-        if (progress) p <- progressr::progressor(along=1:length(param.values))
-        changing.param <- lapply(param.values, function(param.value) {
-            # add the new param to the list of params that may have been built up by
-            # previous calls to this function.
-#cat(param.name, '\n')
-#cat('BEFORE:', paste(names(new.params), toString(new.params)), '\n')
-            new.params <- c(new.params, setNames(list(param.value), param.name))
-#cat('AFTER:', paste(names(new.params), toString(new.params)), '\n')
+    do.work <- function(param.value) {
+        # add the new param to the list of params that may have been built up by
+        # previous calls to this function.
+        new.params <- c(new.params, setNames(list(param.value), param.name))
 
-            if (is.null(inner.function)) {
-                object <- update.static.filter.params(object=object,
-                      new.params=list(snv=new.params, indel=new.params))
-                ret <- list(metrics=vary.get.metrics(object, param.name, new.params[[param.name]]),
-                    calls=vary.get.calls(object, param.name, new.params[[param.name]]))
-            } else {
-                ret <- inner.function(object.copy, new.params=new.params)
+        if (is.null(inner.function)) {
+            object <- update.static.filter.params(object=object,
+                  new.params=list(snv=new.params, indel=new.params))
+            ret <- list(metrics=vary.get.metrics(object, param.name, new.params[[param.name]]),
+                calls=vary.get.calls(object, param.name, new.params[[param.name]]))
+        } else {
+            ret <- inner.function(object.copy, new.params=new.params)
 
-                # record new param.name=param.value in results
-                ret$metrics <- cbind(setnames(data.table(x=param.value), old='x', new=param.name),
-                    ret$metrics)
-                ret$calls <- cbind(setnames(data.table(x=param.value), old='x', new=param.name),
-                    ret$calls)
-            }
-            if (progress) p(amount=1)
-            ret
+            # record new param.name=param.value in results
+            ret$metrics <- cbind(setnames(data.table(x=param.value), old='x', new=param.name),
+                ret$metrics)
+            ret$calls <- cbind(setnames(data.table(x=param.value), old='x', new=param.name),
+                ret$calls)
+        }
+        if (progress) p(amount=1)
+        ret
+    }
+
+    if (progress) {
+        p <- progressr::progressor(along=1:length(param.values))
+        progressr::with_progress({
+            changing.param <- lapply(param.values, do.work)
         })
-    }, enable=TRUE)
+    } else {
+        changing.param <- lapply(param.values, do.work)
+    }
+
     list(metrics=rbindlist(lapply(changing.param, `[[`, 'metrics')),
          calls=rbindlist(lapply(changing.param, `[[`, 'calls')))
 }
@@ -243,9 +260,10 @@ vary.target.fdr <- function(object, target.fdrs, selected.target.fdr=object@call
     x <- object
     if (make.copy)
         x <- data.table::copy(object)  
-    progressr::with_progress({
-        if (progress) p <- progressr::progressor(along=1:length(target.fdrs))
-        changing.fdrs <- lapply(target.fdrs, function(target.fdr) {
+
+    # Just encapsulates the work so we can optionally call with_progress
+    do.work <- function() {
+        lapply(target.fdrs, function(target.fdr) {
             x <- call.mutations(x, target.fdr=target.fdr)
             x <- compute.mutburden(x)
 
@@ -254,7 +272,15 @@ vary.target.fdr <- function(object, target.fdrs, selected.target.fdr=object@call
             if (progress) p(amount=1)
             list(metrics=metrics, calls=calls)
         })
-    }, enable=TRUE)
+    }
+
+    if (progress) {
+        if (progress)
+            p <- progressr::progressor(along=1:length(target.fdrs))
+        changing.fdrs <- progressr::with_progress(do.work(), enable=TRUE)
+    } else {
+        changing.fdrs <- do.work()
+    }
 
     list(metrics=rbindlist(lapply(changing.fdrs, `[[`, 'metrics')),
          calls=rbindlist(lapply(changing.fdrs, `[[`, 'calls')))
