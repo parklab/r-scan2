@@ -25,8 +25,8 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
 
         # autosome burden
         ret.auto <- compute.mutburden.helper(
-            germline=object@gatk[chr %in% autosome.names & resampled.training.site == TRUE & muttype == mt],
-            somatic=object@gatk[chr %in% autosome.names & pass == TRUE & muttype == mt],
+            germline=object@gatk[chr %in% autosome.names & resampled.training.site == TRUE & muttype == mt, .(dp, bulk.dp, training.pass)],
+            somatic=object@gatk[chr %in% autosome.names & pass == TRUE & muttype == mt, .(dp, bulk.dp, pass)],
             sfp=object@static.filter.params[[mt]],
             dptab=object@depth.profile$dptab,
             copy.number=2,
@@ -43,8 +43,8 @@ setMethod("compute.mutburden", "SCAN2", function(object, gbp.per.genome=get.gbp.
         # adjusting copy number.
         ret.sex <- setNames(lapply(sex.chrom.names, function(sex.chrom) {
             compute.mutburden.helper(
-                germline=object@gatk[chr == sex.chrom & resampled.training.site == TRUE & muttype == mt],
-                somatic=object@gatk[chr == sex.chrom & pass == TRUE & muttype == mt],
+                germline=object@gatk[chr == sex.chrom & resampled.training.site == TRUE & muttype == mt, .(dp, bulk.dp, training.pass)],
+                somatic=object@gatk[chr == sex.chrom & pass == TRUE & muttype == mt, .(dp, bulk.dp, pass)],
                 sfp=object@static.filter.params[[mt]],
                 dptab=object@depth.profile$dptabs.sex[[sex.chrom]],
                 copy.number=sex.copy.number,
@@ -132,22 +132,22 @@ compute.mutburden.helper <- function(germline, somatic, sfp, dptab, copy.number,
             warning(paste('could not derive unique breakpoints for quartiles of sequencing depth at germline hSNPs.  this usually indicates that sequencing depth is heavily skewed toward low depths (typically DP=0)\ngot qbreaks = ', deparse(qbreaks)))
         } else {
             # somatic also uses germline-based depth quantiles
-            somatic$dpq <- cut(somatic$dp, qbreaks, include.lowest=T, labels=F)
-            somatic$dpq[somatic$dpq==3] <- 2 # merge 25-75% into a single bin
-            germline$dpq <- cut(germline$dp, qbreaks, include.lowest=T, labels=F)
-            germline$dpq[germline$dpq==3] <- 2
+            somatic[, dpq := cut(dp, qbreaks, include.lowest=TRUE, labels=FALSE)]
+            somatic[dpq == 3, dpq2 := 2]
+            germline[, dpq := cut(dp, qbreaks, include.lowest=TRUE, labels=FALSE)]
+            germline[dpq == 3, dpq2 := 2]
 
             # select the subset of the depth profile passing the bulk depth requirement
             # cut down dptab to the max value in g$dp (+1 because 1 corresponds to dp=0)
             rowqs <- cut(0:(nrow(dptab)-1), qbreaks, include.lowest=T, labels=F)
             rowqs[rowqs==3] <- 2
     
-            somatic <- somatic[dpq %in% qstouse]
-            germline <- germline[dpq %in% qstouse]
-
-            ncalls <- sapply(qstouse, function(q) sum(somatic[dpq == q]$pass, na.rm=TRUE))
+            # sapply(qstouse): can't do a data.table by=dpq because the table is not guaranteed
+            # to have an entry for each dpq.  e.g., somatic indel tables often contain only a
+            # few mutations and do not span all depth quantiles.
+            ncalls <- sapply(qstouse, function(q) somatic[dpq == q, sum(pass, na.rm=TRUE)])
             callable.bp <- sapply(split(dptab[,-(1:sfp$min.bulk.dp)], rowqs), sum)
-            callable.sens <- sapply(qstouse, function(q) mean(germline[bulk.dp >= sfp$min.bulk.dp & dpq == q]$training.pass, na.rm=TRUE)) 
+            callable.sens <- sapply(qstouse, function(q) germline[bulk.dp >= sfp$min.bulk.dp & dpq == q, mean(training.pass, na.rm=TRUE)])
         }
     
         # this data.frame has 1 row for each quantile. the second row (=middle 50%)
