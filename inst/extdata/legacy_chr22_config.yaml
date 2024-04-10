@@ -51,6 +51,7 @@ indel_exclude_dbsnp: true
 indel_cigar_id_score_quantile_cutoff: 0.05
 indel_cigar_hs_score_quantile_cutoff: 0.05
 mimic_legacy: true
+sex: female
 snv_min_sc_alt: 2
 snv_min_sc_dp: 6
 snv_max_bulk_alt: 0
