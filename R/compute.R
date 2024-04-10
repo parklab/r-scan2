@@ -277,12 +277,14 @@ bin.afs <- function(afs, bins=20) {
 # another function for that provides a better estimate!
 estimate.somatic.burden <- function(fc, min.s=1, max.s=5000, n.subpops=10, display=FALSE, rough.interval=0.99) {
     sim <- function(n.muts, g, s, n.samples=1000, diagnose=FALSE) {
-        samples <- rmultinom(n=n.samples, size=n.muts, prob=g)
+        n.pass <- .colSums(rmultinom(n=n.samples, size=n.muts, prob=g) <= s, m=n.samples, n=length(g))
         if (diagnose) {
             boxplot(t(samples))
             lines(s, lwd=2, col=2)
         }
-        mean(apply(samples, 2, function(col) all(col <= s)))
+	    ret <- sum(n.pass)/length(n.pass)
+	    #gc()
+	    ret
     }
 
     # determine how often a sample of N somatic mutations from the
@@ -395,11 +397,12 @@ compute.fdr.prior.data.for.candidates <- function(candidates, hsnps, bins=20, ra
             # use a special value of NA to signal the last depth bucket
             hsnps.by.depth <- lapply(c(0:max.dp,NA), function(thisdp) {
                 if (is.na(thisdp)) {
-                    germ.df <- hsnps[dp > max.dp]
-                    som.df <- candidates[dp > max.dp]
+                    # only the af and dp columns are used, don't copy the whole table
+                    germ.df <- hsnps[dp > max.dp,.(af, dp)]
+                    som.df <- candidates[dp > max.dp,.(af, dp)]
                 } else {
-                    germ.df <- hsnps[dp == thisdp]
-                    som.df <- candidates[dp == thisdp]
+                    germ.df <- hsnps[dp == thisdp,.(af, dp)]
+                    som.df <- candidates[dp == thisdp,.(af, dp)]
                 }
                 list(germ.df=germ.df, som.df=som.df)
             })
@@ -408,7 +411,9 @@ compute.fdr.prior.data.for.candidates <- function(candidates, hsnps, bins=20, ra
                 ret <- fcontrol(germ.df=thisdp$germ.df, som.df=thisdp$som.df, bins=bins, eps=eps, quiet=quiet)
                 if (!quiet) p()
                 ret
-            }, future.seed=0)
+            },
+            future.seed=0,
+            future.globals=c('bins', 'eps', 'quiet'))
         }
     }, enable=TRUE)
 
@@ -518,11 +523,11 @@ estimate.fdr.priors.old <- function(candidates, prior.data)
 
 
 # New implementation of above using tables rather than loops
-estimate.fdr.priors <- function(candidates, prior.data, use.ghet.loo=FALSE)
+# Update: try not to pass the whole @gatk table to avoid memory duplication
+estimate.fdr.priors <- function(dp, af, prior.data, use.ghet.loo=FALSE)
 {
     # Assign each candidate mutation to a (VAF, DP) bin
-    dp <- candidates$dp
-    vafbin <- ceiling(candidates$af * prior.data$bins)
+    vafbin <- ceiling(af * prior.data$bins)
     vafbin[dp == 0 | vafbin == 0] <- 1
     dp.idx <- pmin(dp, prior.data$max.dp+1) + 1
 
