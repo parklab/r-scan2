@@ -616,7 +616,7 @@ setMethod("compute.fdr.prior.data", "SCAN2", function(object, mode=c('legacy', '
         } else {
             sfp <- object@static.filter.params[[mt]]
             # somatic.candidate already implies many non-single-cell-specific filters
-            cand <- object@gatk[muttype == mt & somatic.candidate == TRUE & scalt >= sfp$min.sc.alt & dp >= sfp$min.sc.dp]
+            cand <- object@gatk[muttype == mt & somatic.candidate == TRUE & scalt >= sfp$min.sc.alt & dp >= sfp$min.sc.dp, .(af,dp)]
             # This is not supposed to be a highly filtered list. The filtering
             # should be somewhat equivalent to the pre-filtering steps on somatic
             # mutation candidate sites.
@@ -624,7 +624,7 @@ setMethod("compute.fdr.prior.data", "SCAN2", function(object, mode=c('legacy', '
             # Eventually, I think it would make most sense to apply the entire static
             # filter set to both candidates and hets (minus bulk alt filters, which
             # obviously will not work for hets) before computing FDR priors.
-            hets <- object@gatk[muttype == mt & training.site == TRUE & scalt >= sfp$min.sc.alt & dp >= sfp$min.sc.dp & bulk.dp >= sfp$min.bulk.dp]
+            hets <- object@gatk[muttype == mt & training.site == TRUE & scalt >= sfp$min.sc.alt & dp >= sfp$min.sc.dp & bulk.dp >= sfp$min.bulk.dp, .(af,dp)]
         }
     
         compute.fdr.prior.data.for.candidates(candidates=cand, hsnps=hets, random.seed=0, quiet=quiet, legacy=mode == 'legacy')
@@ -654,7 +654,7 @@ setMethod("compute.fdr", "SCAN2", function(object, path, mode=c('legacy', 'new')
     object@fdr <- c(setNames(lapply(muttypes, function(mt) {
         # First use NT/NA tables to assign NT and NA to every site
         object@gatk[muttype == mt, c('nt', 'na') :=
-            estimate.fdr.priors(.SD, object@fdr.prior.data[[mt]], use.ghet.loo=FALSE)]
+            estimate.fdr.priors(dp=dp, af=af, prior.data=object@fdr.prior.data[[mt]], use.ghet.loo=FALSE)]
 
         # Re-assign NT/NA values to germline het training sites using a
         # leave-one-out appraoch.
@@ -662,7 +662,7 @@ setMethod("compute.fdr", "SCAN2", function(object, path, mode=c('legacy', 'new')
         # as 'hets' in compute.fdr.prior.data.for.candidates(). 
         object@gatk[muttype == mt & training.site == TRUE &
             scalt >= object@static.filter.params[[mt]]$min.sc.alt, c('nt', 'na') :=
-                estimate.fdr.priors(.SD, object@fdr.prior.data[[mt]], use.ghet.loo=TRUE)]
+                estimate.fdr.priors(dp=dp, af=af, prior.data=object@fdr.prior.data[[mt]], use.ghet.loo=TRUE)]
 
         # lysis.fdr and mda.fdr represent the false discovery rate of a population of
         # candidate mutation sites with the same DP and VAF as the site in question.
@@ -691,10 +691,14 @@ setMethod("compute.fdr", "SCAN2", function(object, path, mode=c('legacy', 'new')
                 scalt >= sfp$min.sc.alt &
                 dp >= sfp$min.sc.dp])
         } else if (mode == 'new') {
-            object@gatk[muttype == mt, c('lysis.fdr', 'mda.fdr') :=
+            # Useful hack: when subsetting a data.table (e.g., by muttype==mt above), the
+            # simple arithmetic below causes a good deal of memory allocation.  However,
+            # there is nothing mutation type-specific about the calculation below, so it
+            # is equivalent to just assign to all sites regardless of muttype.
+            object@gatk[, c('lysis.fdr', 'mda.fdr') :=
                 list(lysis.pv*na / (lysis.pv*na + lysis.beta*nt),
                     mda.pv*na / (mda.pv*na + mda.beta*nt))]
-            sites <- nrow(object@gatk[muttype == mt])
+            sites <- object@gatk[, sum(muttype == mt)]
         }
         list(sites=sites)
     }), muttypes), list(mode=mode))
@@ -719,33 +723,60 @@ setMethod("compute.static.filters", "SCAN2", function(object, mode=c('new', 'leg
 
     for (mt in c('snv', 'indel')) {
         sfp <- object@static.filter.params[[mt]]
-        object@gatk[muttype == mt, c('cigar.id.test', 'cigar.hs.test', 'lowmq.test',
-                'dp.test', 'abc.test', 'min.sc.alt.test',
-                'max.bulk.alt.test', 'max.bulk.af.test', 'max.bulk.binom.prob.test',
-                'dbsnp.test', 'csf.test') :=
-                    list(id.score >= object@excess.cigar.scores[[mt]]$id.score.q,
-                        hs.score >= object@excess.cigar.scores[[mt]]$hs.score.q,
-                        is.na(balt.lowmq) | balt.lowmq <= sfp$max.bulk.alt,
-                        dp >= sfp$min.sc.dp & bulk.dp >= sfp$min.bulk.dp,
-                        abc.pv > 0.05,
-                        scalt >= sfp$min.sc.alt,
-                        balt <= sfp$max.bulk.alt,
-                        is.na(sfp$max.bulk.af) | bulk.af <= sfp$max.bulk.af,
-                        is.na(sfp$max.bulk.binom.prob) | bulk.binom.prob <= sfp$max.bulk.binom.prob,
-                        !sfp$exclude.dbsnp | dbsnp == '.',
-                        muttype == 'snv' | unique.donors <= 1 | max.out <= 2)]
+
+        #idq <- c(snv=object@excess.cigar.scores$snv$id.score.q,
+                 #indel=object@excess.cigar.scores$indel$id.score.q)
+        #hsq <- c(snv=object@excess.cigar.scores$snv$hs.score.q,
+                 #indel=object@excess.cigar.scores$indel$hs.score.q)
+        #max.bulk.alt <- c(snv=sfp$snv$max.bulk.alt, indel=sfp$indel$max.bulk.alt)
+        #max.bulk.af <- c(snv=sfp$snv$max.bulk.af, indel=sfp$indel$max.bulk.af)
+        #max.bulk.binom.prob <- c(snv=sfp$snv$max.bulk.binom.prob, indel=sfp$indel$max.bulk.binom.prob)
+        #min.sc.dp <- c(snv=sfp$snv$min.sc.dp, indel=sfp$indel$min.sc.dp)
+        #min.sc.alt <- c(snv=sfp$snv$min.sc.alt, indel=sfp$indel$min.sc.alt)
+        #min.bulk.dp <- c(snv=sfp$snv$min.bulk.dp, indel=sfp$indel$min.bulk.dp)
+        #min.bulk.alt <- c(snv=sfp$snv$min.bulk.alt, indel=sfp$indel$min.bulk.alt)
+        #exclude.dbsnp <- c(snv=sfp$snv$exclude.dbsnp, indel=sfp$snv$exclude.dbsnp)
+
+        #set(object@gatk, i=NULL, value=(object@gatk$id.score >= idq[object@gatk$muttype]), j="cigar.id.test")
+        object@gatk[muttype == mt, c("cigar.id.test", "cigar.hs.test",
+            "lowmq.test", "dp.test", "abc.test", "min.sc.alt.test", 
+            "max.bulk.alt.test", "max.bulk.af.test", "max.bulk.binom.prob.test", 
+            "dbsnp.test", "csf.test") :=
+            #list(id.score >= idq[mt],
+                #hs.score >= hsq[mt],
+                #is.na(balt.lowmq) | balt.lowmq <= max.bulk.alt[mt], 
+                #dp >= min.sc.dp[mt] & bulk.dp >= min.bulk.dp[mt], 
+                #abc.pv > 0.05,
+                #scalt >= min.sc.alt[mt],
+                #balt <= max.bulk.alt[mt], 
+                #is.na(max.bulk.af[mt]) | bulk.af <= max.bulk.af[mt], 
+                #is.na(max.bulk.binom.prob[mt]) | bulk.binom.prob <= max.bulk.binom.prob[mt],
+                #!exclude.dbsnp | dbsnp == ".",
+                #muttype == "snv" | unique.donors <= 1 | max.out <= 2)]
+            list(id.score >= object@excess.cigar.scores[[mt]]$id.score.q,
+                hs.score >= object@excess.cigar.scores[[mt]]$hs.score.q,
+                is.na(balt.lowmq) | balt.lowmq <= sfp$max.bulk.alt,
+                dp >= sfp$min.sc.dp & bulk.dp >= sfp$min.bulk.dp,
+                abc.pv > 0.05,
+                scalt >= sfp$min.sc.alt,
+                balt <= sfp$max.bulk.alt,
+                is.na(sfp$max.bulk.af) | bulk.af <= sfp$max.bulk.af,
+                is.na(sfp$max.bulk.binom.prob) | bulk.binom.prob <= sfp$max.bulk.binom.prob,
+                !sfp$exclude.dbsnp | dbsnp == '.',
+                muttype == 'snv' | unique.donors <= 1 | max.out <= 2)]
 
         if (mode == 'legacy') {
             object@gatk[muttype == mt, c('cigar.id.test', 'cigar.hs.test') := 
-                    list(id.score > object@excess.cigar.scores[[mt]]$id.score.q,
-                        hs.score > object@excess.cigar.scores[[mt]]$hs.score.q)]
+                list(id.score > idq[muttype], hs.score > hsq[muttype])]
+                    #list(id.score > object@excess.cigar.scores[[mt]]$id.score.q,
+                         #hs.score > object@excess.cigar.scores[[mt]]$hs.score.q)]
         }
 
-        object@gatk[muttype == mt, static.filter :=
-            cigar.id.test & cigar.hs.test & lowmq.test & dp.test &
-            abc.test & min.sc.alt.test & max.bulk.alt.test & max.bulk.af.test & max.bulk.binom.prob.test &
-            dbsnp.test & csf.test]
     }
+    object@gatk[, static.filter :=
+        cigar.id.test & cigar.hs.test & lowmq.test & dp.test &
+        abc.test & min.sc.alt.test & max.bulk.alt.test & max.bulk.af.test & max.bulk.binom.prob.test &
+        dbsnp.test & csf.test]
     object
 })
 
@@ -846,16 +877,18 @@ setMethod("call.mutations", "SCAN2", function(object, target.fdr=0.01, quiet=FAL
     # have CIGAR data, not all sites have FDR values and sites not in
     # the cross sample panel (which were originally removed by merge())
     # may have NAs (though they shouldn't; 0-fills should be used).
-    object@call.mutations <- c(
-        as.list(unlist(object@gatk[muttype == 'snv',
-            .(snv.pass=as.integer(sum(pass, na.rm=TRUE)),
-              snv.resampled.training.pass=as.integer(sum(resampled.training.site & training.pass, na.rm=TRUE)))])),
-        as.list(unlist(object@gatk[muttype == 'indel',
-            .(indel.pass=as.integer(sum(pass, na.rm=TRUE)),
-              indel.resampled.training.pass=as.integer(sum(resampled.training.site & training.pass, na.rm=TRUE)))])),
-        list(target.fdr=target.fdr,
-            suppress.shared.indels=suppress.shared.indels,
-            suppress.all.indels=suppress.all.indels))
+    snv.pass <- object@gatk[, sum(muttype == 'snv' & pass == TRUE, na.rm=TRUE)]
+    snv.resampled.training.pass <- object@gatk[, sum(muttype == 'snv' & resampled.training.site == TRUE & training.pass == TRUE, na.rm=TRUE)]
+    indel.pass <- object@gatk[, sum(muttype == 'indel' & pass == TRUE, na.rm=TRUE)]
+    indel.resampled.training.pass <- object@gatk[, sum(muttype == 'indel' & resampled.training.site == TRUE & training.pass == TRUE, na.rm=TRUE)]
+    object@call.mutations <- list(
+        snv.pass=snv.pass,
+        snv.resampled.training.pass=snv.resampled.training.pass,
+        indel.pass=indel.pass,
+        indel.resampled.training.pass=indel.resampled.training.pass,
+        target.fdr=target.fdr,
+        suppress.shared.indels=suppress.shared.indels,
+        suppress.all.indels=suppress.all.indels)
     object
 })
 
