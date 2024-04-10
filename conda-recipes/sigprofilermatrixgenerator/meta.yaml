@@ -1,5 +1,5 @@
 {% set name = "SigProfilerMatrixGenerator" %}
-{% set version = "1.2.9" %}
+{% set version = "1.2.17" %}
 
 package:
   name: "{{ name|lower }}"
@@ -7,7 +7,7 @@ package:
 
 source:
   url: "https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/{{ name }}-{{ version }}.tar.gz"
-  sha256: 94e865a677efed3901908908040b706b95f5cae78422ebf04b0272152bdba1a6
+  sha256: b273b3e70666799737f3f12fe0844b806eedb598de67a02702a98cb8fd69c57d
 
 build:
   number: 0
@@ -17,41 +17,27 @@ requirements:
   host:
     - matplotlib >=2.2.2
     - numpy >=1.18.5
-    - pandas >=0.23.4
+    - pandas >=0.23.4,<2.0.0
     - pip
     - python
     - scipy >=1.1.0
-    - sigprofilerplotting >=1.0.1
+    - sigprofilerplotting >=1.3.11
     - statsmodels >=0.9.0
   run:
     - matplotlib >=2.2.2
     - numpy >=1.18.5
-    - pandas >=0.23.4
+    - pandas >=0.23.4,<2.0.0
     - python
     - scipy >=1.1.0
-    - sigprofilerplotting >=1.0.1
+    - sigprofilerplotting >=1.3.11
     - statsmodels >=0.9.0
 
 test:
   imports:
     - SigProfilerMatrixGenerator
-    - SigProfilerMatrixGenerator.references
-    - SigProfilerMatrixGenerator.references.chromosomes
-    - SigProfilerMatrixGenerator.references.chromosomes.exome
-    - SigProfilerMatrixGenerator.references.chromosomes.transcripts
-    #- SigProfilerMatrixGenerator.references.chromosomes.tsb
-    - SigProfilerMatrixGenerator.references.chromosomes.tsb_BED
-    #- SigProfilerMatrixGenerator.references.matrix
-    - SigProfilerMatrixGenerator.references.vcf_files
-    - SigProfilerMatrixGenerator.references.vcf_files.BED
-    - SigProfilerMatrixGenerator.references.vcf_files.BRCA_example
-    #- SigProfilerMatrixGenerator.references.vcf_files.BRCA_example.SNV
-    - SigProfilerMatrixGenerator.references.vcf_files.GRCh37_bench
-    - SigProfilerMatrixGenerator.scripts
-    - SigProfilerMatrixGenerator.scripts.Benchmark
 
 about:
-  home: The package home page
+  home: "https://github.com/AlexandrovLab/SigProfilerMatrixGenerator.git"
   license: UCSD
   license_family: OTHER
   license_file: 
