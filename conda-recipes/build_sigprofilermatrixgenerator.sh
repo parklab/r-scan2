@@ -1,17 +1,19 @@
 #!/bin/bash
 
+set -exo pipefail
+
 source /home/ljl11/miniconda3_for_building/bin/activate 
 
 echo "================================================================================="
 echo "IMPORTANT"
 echo "IMPORTANT: if you've just built sigprofilerplotting you must avoid using the locally built package"
 echo "IMPORTANT: One way is to `anaconda upload` it and then delete or move the built package at "
-echo "IMPORTANT: /home/ljl11/miniconda3_for_building/conda-bld/noarch/sigprofilerplotting-1.2.2-py_0.tar.bz2"
+echo "IMPORTANT: /home/ljl11/miniconda3_for_building/conda-bld/noarch/sigprofilerplotting-1.3.14-py_0.tar.bz2"
 echo "IMPORTANT: The package file cannot just be renamed in that directory or else conda will automatically"
 echo "IMPORTANT: find it (the package name is stored in the tarball)"
 echo "IMPORTANT"
 echo "================================================================================="
-if [ -f "/home/ljl11/miniconda3_for_building/conda-bld/noarch/sigprofilerplotting-1.2.2-py_0.tar.bz2" ]; then
+if [ -f "/home/ljl11/miniconda3_for_building/conda-bld/noarch/sigprofilerplotting-1.3.14-py_0.tar.bz2" ]; then
     echo "see above warning; please remove this file"
     exit 1
 fi
@@ -22,7 +24,7 @@ fi
 echo "================================================================================="
 echo "conda skeleton pypi"
 echo "================================================================================="
-conda skeleton pypi --python-version 3.8 --version 1.2.9 SigProfilerMatrixGenerator
+conda skeleton pypi --python-version 3.8 --version 1.2.17 SigProfilerMatrixGenerator
 
 # This is fun: the source tarball for sigprofilermatrixgenerator has a case-sensitive URL.
 # Yep. Really. This fails (always, not intermittent) with a 404 error:
@@ -50,4 +52,4 @@ conda-build -c conda-forge -c bioconda -c jluquette sigprofilermatrixgenerator
 echo "================================================================================="
 echo "anaconda upload"
 echo "================================================================================="
-anaconda upload /home/ljl11/miniconda3_for_building/conda-bld/linux-64/sigprofilermatrixgenerator-1.2.9-py38_0.tar.bz2
+anaconda upload /home/ljl11/miniconda3_for_building/conda-bld/linux-64/sigprofilermatrixgenerator-1.2.17-py38_0.tar.bz2
