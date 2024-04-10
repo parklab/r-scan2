@@ -286,10 +286,15 @@ summarize.depth.profile <- function(object) {
 #      read at every somatic candidate. if the base caused by a sequencing error is
 #      uniformly random, then 1/3 of all SNVs could be rejected this way. in the
 #      limit of extreme matched bulks (1000X+), almost all SNVs could be rejected.
+#
+# preserve.object - If TRUE, perform summarization on a copy of `object'.  Otherwise,
+#	`object' will be overwritten.  Because SCAN2 objects are so large (~2-3 Gb for
+#	a full human genome), it can make sense to not duplicate the object if, e.g.,
+# 	we are just summarizing an object that is already saved to disk.
 summarize.call.mutations.and.mutburden <- function(object,
     min.sc.dps=unique(as.integer(seq(object@static.filter.params$snv$min.sc.dp, quantile(object@gatk[training.site==T]$dp, probs=0.75), length.out=5))),
     max.bulk.alts=c(0:3,6,8),
-    target.fdrs=10^seq(-5,0,length.out=25))
+    target.fdrs=10^seq(-5,0,length.out=25), preserve.object=TRUE)
 {
     ret <- list(suppress.shared.indels=NULL, suppress.all.indels=NULL, metrics=NULL, calls=NULL)
     if (!is.null(object@call.mutations)) {
@@ -300,30 +305,39 @@ summarize.call.mutations.and.mutburden <- function(object,
         ret$selected.target.fdr <- object@call.mutations$target.fdr
 
         # copy: don't change the object we're summarizing. data.tables update by reference.
-        object.copy <- data.table::copy(object)
+        object.copy <- object
+        if (preserve.object)
+            object.copy <- data.table::copy(object)
 
-        # no idea why the progress bars don't work.  guess the nested stuff is too much
-        progressr::with_progress({
-            global.p <- progressr::progressor(along=1:(length(max.bulk.alts)*length(min.sc.dps)*length(target.fdrs)))
-            metrics.and.calls <- vary.static.filter.param(
-                object.copy, param.name='max.bulk.alt', param.values=max.bulk.alts,
-                make.copy=FALSE, progress=FALSE,
-                inner.function=function(object, new.params) {
-                    vary.static.filter.param(object, param.name='min.sc.dp', param.values=min.sc.dps,
-                        new.params=new.params,
-                        make.copy=FALSE, progress=FALSE,
-                        inner.function=function(object, new.params) {
-                            param.string <- paste0(names(new.params), '=', new.params, collapse=' ')
-                            global.p(amount=0) #, message=param.string)  # redraw progress bar with no update
-                            object <- update.static.filter.params(object,
-                                new.params=list(snv=new.params, indel=new.params), quiet=2)
-                            global.p(amount=0) #, message=param.string)  # redraw progress bar with no update
-                            ret <- vary.target.fdr(object, target.fdrs=target.fdrs, make.copy=FALSE, progress=FALSE)
-                            global.p(amount=length(target.fdrs)) #, message=param.string)
-                            ret
-                    })
-            })
-        }, enable=TRUE)
+        # assume progressr::handlers(global=TRUE)
+        global.p <- progressr::progressor(along=1:(length(max.bulk.alts)*length(min.sc.dps)*length(target.fdrs)))
+        metrics.and.calls <- vary.static.filter.param(
+            object.copy, param.name='max.bulk.alt', param.values=max.bulk.alts,
+            make.copy=FALSE, progress=FALSE,
+            inner.function=function(object, new.params) {
+                vary.static.filter.param(object, param.name='min.sc.dp', param.values=min.sc.dps,
+                    new.params=new.params,
+                    make.copy=FALSE, progress=FALSE,
+                    inner.function=function(object, new.params) {
+                        param.string <- paste0(names(new.params), '=', new.params, collapse=' ')
+                        global.p(amount=0) #, message=param.string)  # redraw progress bar with no update
+global.p(amount=0, class='sticky', message=paste0('starting update.static.filter.params, param.string=', param.string))
+gg <- gc()
+global.p(class='sticky', message=sprintf('gc: used %f, max used %f', sum(gg[,2]), sum(gg[,6])))
+                        object <- update.static.filter.params(object,
+                            new.params=list(snv=new.params, indel=new.params), quiet=1)
+                        global.p(amount=0) #, message=param.string)  # redraw progress bar with no update
+global.p(amount=0, class='sticky',message=paste0('starting vary.target.fdr. param.string=', param.string))
+gg <- gc()
+global.p(class='sticky',amount=0, message=sprintf('gc: used %f, max used %f', sum(gg[,2]), sum(gg[,6])))
+                        ret <- vary.target.fdr(object, target.fdrs=target.fdrs, make.copy=FALSE, progress=FALSE)
+global.p(amount=0, class='sticky', message=paste0('finished vary.target.fdr. param.string=', param.string))
+gg <- gc()
+global.p(class='sticky',amount=0, message=sprintf('gc: used %f, max used %f', sum(gg[,2]), sum(gg[,6])))
+                        global.p(amount=length(target.fdrs), message=param.string)
+                        ret
+                })
+        })
         ret$metrics <- metrics.and.calls$metrics
         ret$calls <- metrics.and.calls$calls
     }
