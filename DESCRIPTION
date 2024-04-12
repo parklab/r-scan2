@@ -1,6 +1,6 @@
 Package: scan2
-Version: 1.2.9
-Date: 2024-04-04
+Version: 1.2.10
+Date: 2024-04-11
 Title: Single Cell ANalysis 2
 Description: Single cell genotyper using a spatial model of allele balance.
 Author: Lovelace J. Luquette <luquette@g.harvard.edu>
