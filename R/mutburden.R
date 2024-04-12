@@ -133,9 +133,9 @@ compute.mutburden.helper <- function(germline, somatic, sfp, dptab, copy.number,
         } else {
             # somatic also uses germline-based depth quantiles
             somatic[, dpq := cut(dp, qbreaks, include.lowest=TRUE, labels=FALSE)]
-            somatic[dpq == 3, dpq2 := 2]
+            somatic[dpq == 3, dpq := 2]
             germline[, dpq := cut(dp, qbreaks, include.lowest=TRUE, labels=FALSE)]
-            germline[dpq == 3, dpq2 := 2]
+            germline[dpq == 3, dpq := 2]
 
             # select the subset of the depth profile passing the bulk depth requirement
             # cut down dptab to the max value in g$dp (+1 because 1 corresponds to dp=0)
