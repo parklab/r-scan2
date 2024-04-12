@@ -10,6 +10,8 @@ setClass("summary.SCAN2", slots=c(
     single.cell='character',
     bulk='character',
     raw.gatk='null.or.list',
+    mapd='null.or.list',
+    binned.counts='null.or.list',
     depth.profile='null.or.list',
     gatk='null.or.raw.or.dt',
     training.data='null.or.list',
@@ -43,32 +45,77 @@ decompress.dt <- function(x) {
         qs::qdeserialize(x)
 }
 
-make.summary.scan2 <- function(object) {
+# preserve.object - Keep the input SCAN2 `object' in tact while summarizing.  If
+#                   preserve.object=FALSE, the input object will be invalid in
+#                   several ways after this function completes.
+#
+#                   Some of the summarization methods involve updating calling
+#                   parameters (like target.fdr or hard cutoffs like min depth
+#                   requirements).  If preserve.object=TRUE, then these updates
+#                   are performed on a copy of the input object to avoid modifying
+#                   it.  Otherwise, the input object is overwritten.
+#
+#                   However, copying a whole-genome object in a typical human will
+#                   waste 2-3 Gb of RAM, and if multi-threading is used, this
+#                   duplicated RAM will also be multiplied by the number of cores
+#                   used.
+#
+#                   The primary use of this option is to summarize a SCAN2
+#                   analysis object already saved to disk, so that overwriting it
+#                   (in memory) does not lose any information.
+make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
     if (is.compressed(object))
         stop("summarize requires an uncompressed object")
 
-    new("summary.SCAN2",
+    # Unfortunate - if object is loaded from disk, these data.tables cannot
+    # have new columns added to them, which is necessary for summarization.
+    object@binned.counts$sc <- data.table::copy(object@binned.counts$sc)
+    object@binned.counts$bulk <- data.table::copy(object@binned.counts$bulk)
+
+    summary.object <- new("summary.SCAN2",
         region=object@region,
         genome.string=object@genome.string,
         genome.seqinfo=object@genome.seqinfo,
         single.cell=object@single.cell,
         bulk=object@bulk,
-        raw.gatk=summarize.gatk(object),
-        depth.profile=summarize.depth.profile(object),
+        raw.gatk=summarize.gatk(object, quiet=quiet),
+        mapd=summarize.mapd(object, quiet=quiet),
+        binned.counts=summarize.binned.counts(object, quiet=quiet),
+        depth.profile=summarize.depth.profile(object, quiet=quiet),
         gatk=filter.gatk.and.nearby.hets(object),
-        training.data=summarize.training.data(object),
-        ab.fits=summarize.ab.fits(object),
-        ab.distn=summarize.ab.distn(object),
-        mut.models=summarize.mut.models(object),
-        static.filters=summarize.static.filters(object),
-        cigar.data=summarize.cigar.data(object),
-        fdr.prior.data=summarize.fdr.prior.data(object),
-        spatial.sensitivity=summarize.spatial.sensitivity(object),
-        # try to keep call.mutations last. I tried to avoid mucking up the @gatk table
-        # when analyzing different target.fdr cutoffs (this calls call.mutations, which
-        # updates the @gatk data.table by reference), but it might not work correctly.
-        call.mutations.and.mutburden=summarize.call.mutations.and.mutburden(object)
+        training.data=summarize.training.data(object, quiet=quiet),
+        ab.fits=summarize.ab.fits(object, quiet=quiet),
+        ab.distn=summarize.ab.distn(object, quiet=quiet),
+        mut.models=summarize.mut.models(object, quiet=quiet),
+        static.filters=summarize.static.filters(object, quiet=quiet),
+        cigar.data=summarize.cigar.data(object, quiet=quiet),
+        fdr.prior.data=summarize.fdr.prior.data(object, quiet=quiet),
+        spatial.sensitivity=summarize.spatial.sensitivity(object, quiet=quiet),
+        # Compute everything before call.mutations.and.mutburden because
+        # if preserve.object=TRUE, we will delete some large tables (like
+        # spatial.sensitivity$data and binned.counts) to save memory before
+        # multithreading.
+        call.mutations.and.mutburden=summarize.call.mutations.and.mutburden(object, preserve.object=preserve.object, quiet=quiet)
     )
+
+    if (FALSE) {
+        # XXX: This doesn't really help. R does not release memory once allocated
+        # by the OS and does not seem to lower its garbage collection trigger either,
+        # so freeing the two large tables below doesn't do anything.
+        #
+        # To save RAM, delete two large tables that aren't necessary
+        # (currently) for either mutation burden estimation or mutation calling.
+        if (!preserve.object) {
+            if (!quiet)
+                cat("preserve.object=FALSE: deleting @binned.counts and @spatial.sensitivity\n")
+            object@binned.counts <- NULL
+            object@spatial.sensitivity <- NULL
+        }
+        summary.object@call.mutations.and.mutburden <-
+            summarize.call.mutations.and.mutburden(object, preserve.object=preserve.object, quiet=quiet)
+    }
+
+    summary.object
 }
 
 setValidity("summary.SCAN2", function(object) {
@@ -97,16 +144,14 @@ approxify <- function(x, n.digits=3) {
 unapproxify <- function(a) rep(as.numeric(names(a)), a)
 
 
-# Eventually this will involve summarizing the spatial depth profile.
-summarize.depth.profile <- function(object) object@depth.profile
-
 # The full @gatk table is too big to put in a summary object. HOWEVER,
 # we would like to enable certain explorative analyses, e.g., plotting
 # the local region and AB model around candidate and called mutations.
 #
 # For this filtration, it'd be nice to retain the same order as the
 # @gatk table.
-filter.gatk.and.nearby.hets <- function(object, flank=1e4) {
+filter.gatk.and.nearby.hets <- function(object, flank=1e4, quiet=FALSE) {
+    if (!quiet) cat("Retaining candidate sites passing static filters and nearby germline hets...\n")
     flt <- object@gatk[static.filter == TRUE]
     gflt <- flank(GRanges(seqnames=flt$chr, ranges=IRanges(start=flt$pos, width=1)),
         both=TRUE, width=flank)
@@ -119,7 +164,8 @@ filter.gatk.and.nearby.hets <- function(object, flank=1e4) {
 }
 
 # Maybe one day tabulate snvs, indels, training sites, etc. For now pretty useless.
-summarize.gatk <- function(object) {
+summarize.gatk <- function(object, quiet=FALSE) {
+    if (!quiet) cat("Summarizing raw GATK read count table...\n")
     if (is.null(object@gatk)) {
         list(nrows=NULL)
     } else {
@@ -127,7 +173,8 @@ summarize.gatk <- function(object) {
     }
 }
 
-summarize.training.data <- function(object) {
+summarize.training.data <- function(object, quiet=FALSE) {
+    if (!quiet) cat("Summarizing germline training sites...\n")
     ret <- list(n.sites=c(hsnps=NULL, hindels=NULL),
         hap.nrows=c(`0|1`=NULL, `1|0`=NULL),
         neighbor.cov.approx=NULL,
@@ -141,25 +188,26 @@ summarize.training.data <- function(object) {
         ret$message <- '0 training sites in table'
     } else {
         # germline indels are not used for AB model training, but record the number anyway
-        ret$n.sites$hsnps = nrow(object@gatk[training.site==TRUE & muttype=='snv'])
-        ret$n.sites$hindels = nrow(object@gatk[training.site==TRUE & muttype=='indel'])
+        ret$n.sites$hsnps <- object@gatk[training.site==TRUE & muttype=='snv', length(muttype)]
+        ret$n.sites$hindels <- object@gatk[training.site==TRUE & muttype=='indel', length(muttype)]
         per.hap <- object@gatk[training.site==TRUE & muttype == 'snv', .N, by=phased.gt]
         ret$hap.nrows[per.hap$phased.gt] <- per.hap$N
-        ret$nrows <- nrow(object@gatk[training.site==TRUE & muttype=='snv'])
+        ret$nrows <- object@gatk[training.site==TRUE & muttype=='snv', length(muttype)]
         ret$neighbor.cov.approx <- approx.abmodel.covariance(object, bin.breaks=10^(0:5))
         ret$neighbor.cov.approx.full <- approx.abmodel.covariance(object, bin.breaks=c(1, 10^seq(1,5,length.out=50)))
         if ('resampled.training.site' %in% colnames(object@gatk)) {
             ret$resampled$hsnps <-
-                nrow(object@gatk[resampled.training.site == TRUE & muttype == 'snv'])
+                object@gatk[resampled.training.site == TRUE & muttype == 'snv', length(muttype)]
             ret$resampled$hindels <-
-                nrow(object@gatk[resampled.training.site == TRUE & muttype == 'indel'])
+                object@gatk[resampled.training.site == TRUE & muttype == 'indel', length(muttype)]
         }
     }
 
     ret
 }
 
-summarize.ab.fits <- function(object) {
+summarize.ab.fits <- function(object, quiet=FALSE) {
+    if (!quiet) cat("Summarizing AB model parameter fits...\n")
     ret <- list(
         params=NULL,
         message=NULL
@@ -174,7 +222,8 @@ summarize.ab.fits <- function(object) {
     ret
 }
 
-summarize.ab.distn <- function(object) {
+summarize.ab.distn <- function(object, quiet=FALSE) {
+    if (!quiet) cat("Summarizing AB distribution...\n")
     ret <- list(
         all.sites=list(gp.mu=NULL, gp.sd=NULL),
         training.sites=list(gp.mu=NULL, gp.sd=NULL),
@@ -195,13 +244,14 @@ summarize.ab.distn <- function(object) {
     ret
 }
 
-summarize.mut.models <- function(object) {
+summarize.mut.models <- function(object, quiet=FALSE) {
+    if (!quiet) cat("Summarizing mutation models...\n")
     ret <- list(
         training.hsnps=list(abc.pv=NULL, lysis.pv=NULL, mda.pv=NULL),
         training.hindels=list(abc.pv=NULL, lysis.pv=NULL, mda.pv=NULL)
     )
     if (!is.null(object@mut.models)) {
-        tdata <- object@gatk[training.site==TRUE & muttype == 'snv']
+        tdata <- object@gatk[training.site==TRUE & muttype == 'snv', .(abc.pv, lysis.pv, mda.pv)]
         ret$training.hsnps$abc.pv <- approxify(tdata$abc.pv)
         ret$training.hsnps$lysis.pv <- approxify(tdata$lysis.pv)
         ret$training.hsnps$mda.pv <- approxify(tdata$mda.pv)
@@ -213,7 +263,8 @@ summarize.mut.models <- function(object) {
     ret
 }
 
-summarize.static.filters <- function(object) {
+summarize.static.filters <- function(object, quiet=FALSE) {
+    if (!quiet) cat("Summarizing static filters...\n")
     ret <- list(params=NULL)
     if (!is.null(object@static.filter.params)) {
         ret$params <- object@static.filter.params
@@ -223,7 +274,8 @@ summarize.static.filters <- function(object) {
     ret
 }
 
-summarize.cigar.data <- function(object) {
+summarize.cigar.data <- function(object, quiet=FALSE) {
+    if (!quiet) cat("Summarizing CIGAR data...\n")
     ret <- list(snv=NULL, indel=NULL)
     if (!is.null(object@cigar.data)) {
         ret$snv <- object@excess.cigar.scores$snv
@@ -232,7 +284,8 @@ summarize.cigar.data <- function(object) {
     ret
 }
 
-summarize.fdr.prior.data <- function(object) {
+summarize.fdr.prior.data <- function(object, quiet=FALSE) {
+    if (!quiet) cat("Summarizing FDR prior data...\n")
     ret <- list(snv=NULL, indel=NULL, mode=NULL)
     if (!is.null(object@fdr.prior.data)) {
         ret$snv <- object@fdr.prior.data$snv
@@ -242,11 +295,46 @@ summarize.fdr.prior.data <- function(object) {
     ret
 }
 
-summarize.depth.profile <- function(object) {
+# The "canonical" MAPD is just the closest measurement to the MAPDs we
+# used to compute using Max's MAPD script (derived from Baslan et al),
+# which used their "50k" bins.  The "50k" in that number actually refers
+# to the *number* of variable width bins across the genome, no the number
+# of alignable basepairs per bin.  It just happens to turn out that the
+# two were roughly equivalent.
+summarize.mapd <- function(object, quiet=FALSE) {
+    if (!quiet) cat("Summarizing MAPDs...\n")
+    ret <- list(canonical.mapd=NULL, mapds=NULL)
+    if (!is.null(object@binned.counts)) {
+        chroms.to.use <- c(get.autosomes(results), get.sex.chroms(results))
+        ret$mapds <- compute.mapds(object@binned.counts$sc[chr %in% chroms.to.use])
+        bc.50k <- collapse.binned.counts(binned.counts=object@binned.counts$sc[chr %in% chroms.to.use], n.bins=50)
+        bc.50k <- gc.correct(bc.50k)
+        ret$canonical.mapd <- compute.mapd(bc.50k$ratio.gcnorm)
+    }
+    ret
+}
+
+summarize.binned.counts <- function(object, quiet=FALSE) {
+    if (!quiet) cat("Summarizing binned counts...\n")
+    ret <- list(sc=NULL, bulk=NULL)
+    if (!is.null(object@binned.counts)) {
+        chroms.to.use <- c(get.autosomes(results), get.sex.chroms(results))
+        ret$sc <- gc.correct(collapse.binned.counts(object@binned.counts$sc[chr %in% chroms.to.use], 100))
+        ret$sc <- segment.cbs(ret$sc, genome.string=object@genome.string, method='garvin')
+        ret$sc <- mimic.ginkgo(ret$sc)
+        ret$bulk <- gc.correct(collapse.binned.counts(object@binned.counts$bulk[chr %in% chroms.to.use], 100))
+        ret$bulk <- segment.cbs(ret$bulk, genome.string=object@genome.string, method='garvin')
+        ret$bulk <- mimic.ginkgo(ret$bulk)
+    }
+    ret
+}
+
+summarize.depth.profile <- function(object, quiet=FALSE) {
+    if (!quiet) cat("Summarizing per-basepair depth profile...\n")
     ret <- list(dptab=NULL, dptabs.sex=NULL, clamp.dp=NULL)
     if (!is.null(object@depth.profile)) {
-        ret$dptab <- object@depth.profile$dptab
-        ret$dptabs.sex <- object@depth.profile$dptabs.sex
+        ret$dptab <- compress.dt(object@depth.profile$dptab)
+        ret$dptabs.sex <- lapply(object@depth.profile$dptabs.sex, compress.dt)
         ret$clamp.dp <- object@depth.profile$clamp.dp
         ret$mean.coverage <- mean.coverage(object)
     }
@@ -288,14 +376,32 @@ summarize.depth.profile <- function(object) {
 #      limit of extreme matched bulks (1000X+), almost all SNVs could be rejected.
 #
 # preserve.object - If TRUE, perform summarization on a copy of `object'.  Otherwise,
-#	`object' will be overwritten.  Because SCAN2 objects are so large (~2-3 Gb for
-#	a full human genome), it can make sense to not duplicate the object if, e.g.,
-# 	we are just summarizing an object that is already saved to disk.
+#      `object' will be overwritten.  Because SCAN2 objects are so large (~2-3 Gb for
+#      a full human genome), it can make sense to not duplicate the object if, e.g.,
+#      we are just summarizing an object that is already saved to disk.
+# params.to.test - list of named parameters (which must be valid parameter names
+#      for static.filter.params) and vectors of values to test.  All possible paramter
+#      combinations will be tested.  Default calling parameters are included to allow
+#      sanity checking (i.e., that summaries from this function match the actual SCAN2
+#      results).
+# target.fdrs - target.fdr is notably *not* included with the parameters in
+#      params.to.test. This is because target.fdr does not change the somatic candidate
+#      set like the other parameters, which means that the FDR heuristics need not be
+#      recalculated when changing target.fdr.
 summarize.call.mutations.and.mutburden <- function(object,
-    min.sc.dps=unique(as.integer(seq(object@static.filter.params$snv$min.sc.dp, quantile(object@gatk[training.site==T]$dp, probs=0.75), length.out=5))),
-    max.bulk.alts=c(0:3,6,8),
-    target.fdrs=10^seq(-5,0,length.out=25), preserve.object=TRUE)
+    params.to.test=list(
+        min.sc.dp=unique(as.integer(seq(object@static.filter.params$snv$min.sc.dp, quantile(object@gatk[training.site==T]$dp, probs=0.75), length.out=4))),
+        max.bulk.alt=c(0:3)),                     # 0 is default
+        # max.bulk{af,binom.prob} don't make sense for a typical user;
+        # they're both only interesting when trying to call clonal mutations,
+        # which is a non-standard use of SCAN2.
+        # exclude.dbsnp is also not particularly interesting.
+        #max.bulk.af=c(0.5, 1),                  # 1 is default (=no filtration)
+        #max.bulk.binom.prob=c(10^-c(8:6), 1),   # 1 is default (=no filtration)
+        #exclude.dbsnp=c(TRUE, FALSE)),
+    target.fdrs=10^seq(-5,0,length.out=20), preserve.object=TRUE, quiet=FALSE)
 {
+    if (!quiet) cat("Summarizing mutation calls and mutburden...\n")
     ret <- list(suppress.shared.indels=NULL, suppress.all.indels=NULL, metrics=NULL, calls=NULL)
     if (!is.null(object@call.mutations)) {
         ret$suppress.shared.indels <- object@call.mutations$suppress.shared.indels
@@ -309,43 +415,44 @@ summarize.call.mutations.and.mutburden <- function(object,
         if (preserve.object)
             object.copy <- data.table::copy(object)
 
+        param.grid <- expand.grid(params.to.test, KEEP.OUT.ATTRS=FALSE)
         # assume progressr::handlers(global=TRUE)
-        global.p <- progressr::progressor(along=1:(length(max.bulk.alts)*length(min.sc.dps)*length(target.fdrs)))
-        metrics.and.calls <- vary.static.filter.param(
-            object.copy, param.name='max.bulk.alt', param.values=max.bulk.alts,
-            make.copy=FALSE, progress=FALSE,
-            inner.function=function(object, new.params) {
-                vary.static.filter.param(object, param.name='min.sc.dp', param.values=min.sc.dps,
-                    new.params=new.params,
-                    make.copy=FALSE, progress=FALSE,
-                    inner.function=function(object, new.params) {
-                        param.string <- paste0(names(new.params), '=', new.params, collapse=' ')
-                        global.p(amount=0) #, message=param.string)  # redraw progress bar with no update
-global.p(amount=0, class='sticky', message=paste0('starting update.static.filter.params, param.string=', param.string))
-gg <- gc()
-global.p(class='sticky', message=sprintf('gc: used %f, max used %f', sum(gg[,2]), sum(gg[,6])))
-                        object <- update.static.filter.params(object,
-                            new.params=list(snv=new.params, indel=new.params), quiet=1)
-                        global.p(amount=0) #, message=param.string)  # redraw progress bar with no update
-global.p(amount=0, class='sticky',message=paste0('starting vary.target.fdr. param.string=', param.string))
-gg <- gc()
-global.p(class='sticky',amount=0, message=sprintf('gc: used %f, max used %f', sum(gg[,2]), sum(gg[,6])))
-                        ret <- vary.target.fdr(object, target.fdrs=target.fdrs, make.copy=FALSE, progress=FALSE)
-global.p(amount=0, class='sticky', message=paste0('finished vary.target.fdr. param.string=', param.string))
-gg <- gc()
-global.p(class='sticky',amount=0, message=sprintf('gc: used %f, max used %f', sum(gg[,2]), sum(gg[,6])))
-                        global.p(amount=length(target.fdrs), message=param.string)
-                        ret
-                })
+        global.p <- progressr::progressor(along=1:nrow(param.grid))
+        metrics.and.calls <- lapply(1:nrow(param.grid), function(i) {
+            this.params <- param.grid[i,,drop=TRUE]  # creates a list(name1=val_i, name2=val_i, ...)
+            param.string <- paste0(names(this.params), '=', this.params, collapse=' ')
+
+            global.p(amount=0, class='sticky',
+                message=paste0('starting update.static.filter.params, param.string=', param.string))
+            object <- update.static.filter.params(object,
+                new.params=list(snv=this.params, indel=this.params), quiet=2)
+
+            global.p(amount=0, class='sticky',
+                message=paste0('starting vary.target.fdr(', length(target.fdrs), '). param.string=', param.string))
+            ret <- vary.target.fdr(object, target.fdrs=target.fdrs, make.copy=FALSE, progress=FALSE)
+
+            global.p(amount=0, class='sticky', message=paste0('finished. param.string=', param.string))
+            gg <- gc()
+            global.p(amount=0, class='sticky',message=sprintf('gc: used %f, max used %f',
+                sum(gg[,2]), sum(gg[,6])))
+            global.p(amount=1)
+
+            # Annotate the collected calls and metrics with the parameters used
+            ret$metrics <- cbind(as.data.table(this.params), ret$metrics)
+            ret$calls <- cbind(as.data.table(this.params), ret$calls)
+            ret
         })
-        ret$metrics <- metrics.and.calls$metrics
-        ret$calls <- metrics.and.calls$calls
+
+        # Now stack the list of `metrics` tables 
+        ret$metrics <- rbindlist(lapply(metrics.and.calls, `[[`, 'metrics'))
+        # ditto for `calls` tables
+        ret$calls <- rbindlist(lapply(metrics.and.calls, `[[`, 'calls'))
     }
     ret
 }
 
-
-summarize.spatial.sensitivity <- function(object) {
+summarize.spatial.sensitivity <- function(object, quiet=FALSE) {
+    if (!quiet) cat("Summarizing spatial sensitivity...\n")
     ret <- list(tilewidth=NULL, neighborhood.tiles=NULL)
     ss <- object@spatial.sensitivity
     if (!is.null(ss)) {
@@ -377,7 +484,7 @@ summarize.spatial.sensitivity <- function(object) {
         # N.B. it would save ~20M (compressed) to delete the chr,start,end columns and require them
         # to match whatever tile.genome returns. Seems the space tradeoff isn't worth making things
         # more brittle.
-        ret$profile <-
+        ret$predicted.sensitivity <-
             compress.dt(ss$data[,.(chr,start,end,pred.snv.maj,pred.snv.min, pred.indel.maj, pred.indel.min)])
     }
     ret
