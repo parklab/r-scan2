@@ -443,7 +443,7 @@ setMethod("plot.depth.profile", "SCAN2", function(object, maxdp, keep.zero=FALSE
 })
 
 setMethod("plot.depth.profile", "summary.SCAN2", function(object, maxdp, keep.zero=FALSE, quantile=0.99) {
-    d <- object@depth.profile$dptab
+    d <- decompress.dt(object@depth.profile$dptab)
     if (missing(maxdp))
         maxdp <- object@depth.profile$clamp.dp
     helper.plot.depth.profile(d=d, maxdp=maxdp, keep.zero=keep.zero, quantile=quantile)
@@ -624,21 +624,21 @@ setMethod('plot.target.fdr.effect', 'summary.SCAN2',
     helper.plot.target.fdr.effect(tab)
 })
 
-helper.plot.target.fdr.effect <- function(tab) {
-    fdr.used <- tab[selected.target.fdr == TRUE]$target.fdr
+helper.plot.target.fdr.effect <- function(tab, selected.target.fdr) {
+    #fdr.used <- tab[selected.target.fdr == TRUE]$target.fdr
     layout(1:2)
     plot(tab[target.fdr < 1,.(target.fdr, n.pass)],
         type='b', pch=20, log='x',
         xlab='--target-fdr parameter (log-scale)',
         ylab='SCAN2 VAF-based calls',
         main=paste('Number of VAF-based calls'))
-    abline(v=fdr.used, lty='dashed')
+    abline(v=selected.target.fdr, lty='dashed')
     plot(tab[target.fdr < 1,.(target.fdr, (1-target.fdr)*n.pass / (n.resampled.training.pass/total.resampled))],
         type='b', pch=20, log='x',
         xlab='--target-fdr parameter (log-scale)',
         ylab='(1-FDR) * (Somatic mutations) / naive sensitivity',
         main='Ideal FDR interpretation')
-    abline(v=fdr.used, lty='dashed')
+    abline(v=selected.target.fdr, lty='dashed')
 }
 
 
@@ -681,7 +681,27 @@ helper.plot.mutburden <- function(tab) {
 }
 
 
-plot.binned.counts <- function(binned.counts, sample.name, type=c('count', 'ratio', 'ratio.gcnorm', 'cnv'), ...) {
+###############################################################################
+# Plot the depth profiles of 100kb "variable width" bins.  These plots are used
+# to judge amplification quality, not to call somatic CNVs like one might
+# expect.
+###############################################################################
+
+setGeneric('plot.binned.counts', function(object, type=c('count', 'ratio', 'ratio.gcnorm', 'cnv')) standardGeneric('plot.binned.counts'))
+setMethod('plot.binned.counts', 'SCAN2',
+    function(object, type=c('count', 'ratio', 'ratio.gcnorm', 'cnv'))
+{
+    bc <- summarize.binned.counts(object, quiet=FALSE)$sc
+    helper.plot.binned.counts(bc, sample.name=object@single.cell, type=type)
+})
+
+setMethod('plot.binned.counts', 'summary.SCAN2',
+    function(object, type=c('count', 'ratio', 'ratio.gcnorm', 'cnv'))
+{
+    helper.plot.binned.counts(object@binned.counts$sc, sample.name=object@single.cell, type=type)
+})
+
+helper.plot.binned.counts <- function(binned.counts, sample.name, type=c('count', 'ratio', 'ratio.gcnorm', 'cnv'), ...) {
     chrs.in.order <- binned.counts[!duplicated(chr)]$chr
     type <- match.arg(type)
 
