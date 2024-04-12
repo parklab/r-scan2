@@ -277,13 +277,16 @@ bin.afs <- function(afs, bins=20) {
 # another function for that provides a better estimate!
 estimate.somatic.burden <- function(fc, min.s=1, max.s=5000, n.subpops=10, display=FALSE, rough.interval=0.99) {
     sim <- function(n.muts, g, s, n.samples=1000, diagnose=FALSE) {
-        n.pass <- .colSums(rmultinom(n=n.samples, size=n.muts, prob=g) <= s, m=n.samples, n=length(g))
+        n.pass <- .colSums(rmultinom(n=n.samples, size=n.muts, prob=g) <= s, m=length(g), n=n.samples)
         if (diagnose) {
             boxplot(t(samples))
             lines(s, lwd=2, col=2)
         }
-	    ret <- sum(n.pass)/length(n.pass)
-	    #gc()
+        # if the random mutations fit underneath the germline curve at
+        # every AF bin, then the .colSums() above will equal the number
+        # of AF bins (which is length(g)).
+	    ret <- sum(n.pass == length(g))/length(n.pass)
+	    #gc()   # XXX: it is waaay too slow to gc() on every simulation
 	    ret
     }
 
