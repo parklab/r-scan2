@@ -985,6 +985,11 @@ setMethod("compute.sensitivity.models", "SCAN2", function(object) {
     # Split data into two halves for later hold-out training
     data[, hold.out := rbinom(nrow(.SD), size=1, prob=1/2)]
 
+    # Standardized Z-score for depth - there is still an issue where depth is generally
+    # positively correlated with sensitivity until extremely high depth is reached.
+    data[, norm.mean.sc.dp := ifelse(mean.sc.dp==0, NA, log10(mean.sc.dp))]
+    data[, norm.mean.sc.dp := (norm.mean.sc.dp - mean(norm.mean.sc.dp, na.rm=TRUE))/sd(norm.mean.sc.dp, na.rm=TRUE)]
+
     # Each call to model.somatic.sensitivity updates `ret`.
     # IMPORTANT: the returned model objects are HUGE (~1 GB each) because copies
     # of the entire input dataset are retained along with several O(#rows)-sized
