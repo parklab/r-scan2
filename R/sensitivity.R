@@ -172,7 +172,8 @@ model.somatic.sensitivity <- function(tiles, muttype=c('snv', 'indel'), allelety
     # reasonable depth values is positively related with sensitivity.  now seems to be better
     model.rhs <- paste(
         c('abs(gp.mu)', bsc, bblk, nbr, 'gp.sd', 'mean.sc.dp', 
-          'I(log10(1+mean.sc.dp))',
+          #'I(log10(1+mean.sc.dp))',
+          'norm.mean.sc.dp',
           # recycle0 - if length(sex.chroms)=0, then paste(.) returns a 0-length result
           paste0('is.', sex.chroms, recycle0=TRUE)),
         collapse=" + ")
@@ -254,9 +255,19 @@ assess.covariate <- function(object, cov, cov.bin.digits=2) {
 
         # abs() does nothing for gp.sd, which is >0. Just want round(2)
         xform <- function(x) round(abs(x),cov.bin.digits)
-    }
-    if (cov == 'mean.sc.dp')
+    } else if (cov == 'mean.sc.dp') {
         xform <- function(x) round(x,0)   # integerize, but nearest
+    } else if (cov == 'norm.mean.sc.dp') {
+        xform <- function(x) round(x, cov.bin.digits)
+    } else if (cov == 'I(log10(1 + mean.sc.dp))') {
+        cov <- 'mean.sc.dp'
+        xform <- function(x) round(log10(1+x), cov.bin.digits)
+    # E.g., when "X" is the name of chromosome X, the model will have a covariate
+    # named is.XTRUE.  Code here avoids assuming the name of the sex chromosomes.
+    } else if (substr(cov, 1, 3) == 'is.' & substr(cov, nchar(cov)-3, nchar(cov)) == 'TRUE') {
+        cov <- 'chr'
+        xform <- function(x) x == sub('^is.', '', sub('TRUE$', '', cov.name))
+    }
 
     # is.na(mean.bulk.dp) is essentially an alias for tiles in unassembled genome
     # regions. there are ~71 tiles containing hSNPs with is.na(mean.bulk.dp) vs.
