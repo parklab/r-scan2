@@ -263,7 +263,9 @@ vary.target.fdr <- function(object, target.fdrs, selected.target.fdr=object@call
 
     # Just encapsulates the work so we can optionally call with_progress
     do.work <- function() {
-        lapply(target.fdrs, function(target.fdr) {
+        old.opt <- getOption('future.globals.maxSize')
+        options(future.globals.maxSize=4e9)  # 4GB
+        ret <- future.apply::future_lapply(target.fdrs, function(target.fdr) {
             x <- call.mutations(x, target.fdr=target.fdr)
             x <- compute.mutburden(x)
 
@@ -272,12 +274,13 @@ vary.target.fdr <- function(object, target.fdrs, selected.target.fdr=object@call
             if (progress) p(amount=1)
             list(metrics=metrics, calls=calls)
         })
+        options(future.globals.maxSize=old.opt)
+        ret
     }
 
     if (progress) {
-        if (progress)
-            p <- progressr::progressor(along=1:length(target.fdrs))
-        changing.fdrs <- progressr::with_progress(do.work(), enable=TRUE)
+        p <- progressr::progressor(along=1:length(target.fdrs))
+        progressr::with_progress(changing.fdrs <- do.work(), enable=TRUE)
     } else {
         changing.fdrs <- do.work()
     }
