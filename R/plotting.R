@@ -613,7 +613,7 @@ setMethod('plot.target.fdr.effect', 'SCAN2',
 {
     this.muttype <- match.arg(muttype)
     tab <- summarize.call.mutations.and.mutburden(object)$metrics[muttype == this.muttype]
-    helper.plot.target.fdr.effect(tab)
+    helper.plot.target.fdr.effect(tab, selected.target.fdr=object@call.mutations$target.fdr)
 })
 
 setMethod('plot.target.fdr.effect', 'summary.SCAN2',
@@ -621,7 +621,7 @@ setMethod('plot.target.fdr.effect', 'summary.SCAN2',
 {
     this.muttype <- match.arg(muttype)
     tab <- object@call.mutations.and.mutburden$metrics[muttype == this.muttype]
-    helper.plot.target.fdr.effect(tab)
+    helper.plot.target.fdr.effect(tab, selected.target.fdr=object@call.mutations.and.mutburden$selected.target.fdr)
 })
 
 helper.plot.target.fdr.effect <- function(tab, selected.target.fdr) {
@@ -729,5 +729,116 @@ helper.plot.binned.counts <- function(binned.counts, sample.name, type=c('count'
 
     if (type == 'cnv' && 'garvin.seg.integer' %in% names(binned.counts)) {
         lines(binned.counts$garvin.seg.integer, lwd=2, col=2)
+    }
+}
+
+
+
+###############################################################################
+# Plot the allele balance distribution.
+###############################################################################
+
+setGeneric('plot.ab.distn', function(x, type=c('af', 'ab')) standardGeneric('plot.ab.distn'))
+setMethod('plot.ab.distn', 'SCAN2', function(x, type=c('af', 'ab')) {
+    helper.plot.ab.distn(ab.distn(x, type))
+})
+
+setMethod('plot.ab.distn', 'summary.SCAN2', function(x, type=c('af', 'ab')) {
+    helper.plot.ab.distn(ab.distn(x, type))
+})
+
+setMethod('plot.ab.distn', 'list', function(x, type=c('af', 'ab')) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+
+    helper.plot.ab.distn(ab.distn(x, type=type))
+})
+
+helper.plot.ab.distn <- function(abmat) {
+    lwd <- ifelse(ncol(abmat) > 5, 1, 2)
+    # The x values are the same across `ablist' because density() is applied
+    # with n=512 and from=0, to=1, so exactly the same range is used.
+    matplot(abmat[,1], abmat[,-1],
+        bty='l', lwd=lwd, lty='solid', type='l',
+        xlab=toupper(colnames(abmat)[1]), ylab='Density')
+}
+
+
+###############################################################################
+# Plot the depth distribution of only the single cell. See plot.depth.profile
+# for a (single cell DP x bulk DP) plot.
+###############################################################################
+
+setGeneric('plot.dp.distn', function(x) standardGeneric('plot.dp.distn'))
+setMethod('plot.dp.distn', 'SCAN2', function(x) {
+    helper.plot.dp.distn(dp.distn(x))
+})
+
+setMethod('plot.dp.distn', 'summary.SCAN2', function(x) {
+    helper.plot.dp.distn(dp.distn(x))
+})
+
+setMethod('plot.dp.distn', 'list', function(x) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+
+    helper.plot.dp.distn(dp.distn(x))
+})
+
+helper.plot.dp.distn <- function(dpmat) {
+    lwd <- ifelse(ncol(dpmat) > 5, 1, 2)
+    mean.dps <- apply(dpmat, 2, function(col) sum(0:(length(col)-1)*col)/sum(col))
+    # Find the 75th percentile of depth for each sample. Use the max among those
+    qs <- apply(dpmat[-1,-1,drop=FALSE], 2, function(dps) which(cumsum(dps) >= 0.75*sum(dps))[1])
+    xlim <- c(0, max(qs))
+    matplot(dpmat[-1,1], dpmat[-1,-1],
+        bty='l', lwd=lwd, lty='solid', type='l',
+        xlab='Sequencing depth', ylab='Bases', xlim=xlim)
+    means.xy <- cbind(round(mean.dps), dpmat[cbind(1+round(mean.dps), 1:ncol(dpmat))])[-1,,drop=FALSE]
+    colnames(means.xy) <- c('x', 'y')
+    points(means.xy, pch=20, col=1:6)
+}
+
+
+###############################################################################
+# Plot the MAPD curve(s)
+###############################################################################
+
+setGeneric('plot.mapd', function(x, type=c('curve', 'canonical')) standardGeneric('plot.mapd'))
+setMethod('plot.mapd', 'SCAN2', function(x, type=c('curve', 'canonical')) {
+    helper.plot.mapd(mapd(x, type), type=type)
+})
+
+setMethod('plot.mapd', 'summary.SCAN2', function(x, type=c('curve', 'canonical')) {
+    helper.plot.mapd(mapd(x, type), type=type)
+})
+
+setMethod('plot.mapd', 'list', function(x, type=c('curve', 'canonical')) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+
+    helper.plot.mapd(mapd(x, type=type), type=type)
+})
+
+helper.plot.mapd <- function(mapds, type=c('curve', 'canonical')) {
+    type <- match.arg(type)
+    if (type == 'curve') {
+        lwd <- ifelse(ncol(mapds) > 5, 1, 2)
+        matplot(mapds[,'binsize'], mapds[,-1],
+            bty='l', log='x', lwd=lwd, lty='solid', type='l',
+            xlab='Bin size (log scale)', ylab='MAPD')
+    } else if (type == 'canonical') {
+        # Rough: say one line height is equal to M width
+        emsize <- strwidth('M', units='inches', cex=3/4)
+        label.size <- max(c(4, sapply(names(mapds)[-1], strwidth, units='inches', cex=3/4)/emsize))
+        oldpar <- par(mar=c(label.size, 4, 1, 1))
+        barplot(mapds, las=3, ylab='MAPD', xlab='', cex.names=3/4)
+        par(mar=oldpar)
     }
 }
