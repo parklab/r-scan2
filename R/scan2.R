@@ -873,6 +873,11 @@ setMethod("call.mutations", "SCAN2", function(object, target.fdr=0.01, quiet=FAL
             (cigar.id.test & cigar.hs.test & dp.test & abc.test & min.sc.alt.test) &
             lysis.fdr <= target.fdr & mda.fdr <= target.fdr]
 
+    # Rescue hasn't happened (or if it has, reset it), so introduce the rescue column
+    # for consistency.
+    object@gatk[, rescue := FALSE]
+
+
     # NAs are especially present in legacy output where not all sites
     # have CIGAR data, not all sites have FDR values and sites not in
     # the cross sample panel (which were originally removed by merge())
