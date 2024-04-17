@@ -9,6 +9,8 @@ setClass("summary.SCAN2", slots=c(
     genome.seqinfo='null.or.Seqinfo',
     single.cell='character',
     bulk='character',
+    sex='character',
+    amplification='character',
     raw.gatk='null.or.list',
     mapd='null.or.list',
     binned.counts='null.or.list',
@@ -78,10 +80,15 @@ make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
         genome.seqinfo=object@genome.seqinfo,
         single.cell=object@single.cell,
         bulk=object@bulk,
+        sex=object@sex,
+        amplification=object@amplification,
         raw.gatk=summarize.gatk(object, quiet=quiet),
         mapd=summarize.mapd(object, quiet=quiet),
         binned.counts=summarize.binned.counts(object, quiet=quiet),
         depth.profile=summarize.depth.profile(object, quiet=quiet),
+        # an uncompressed, tiny table of only called mutations for fast access
+        # must be kept up-to-date by, e.g., rescue.
+        gatk.calls=object@gatk[pass == TRUE | rescue == TRUE],    
         gatk=filter.gatk.and.nearby.hets(object),
         training.data=summarize.training.data(object, quiet=quiet),
         ab.fits=summarize.ab.fits(object, quiet=quiet),
@@ -233,10 +240,12 @@ summarize.ab.distn <- function(object, quiet=FALSE) {
     if (is.null(object@ab.estimates)) {
         ret$message <- "allele balance estimates not computed"
     } else {
+        ret$all.sites$af <- approxify(object@gatk$af)
         ret$all.sites$gp.mu <- approxify(object@gatk$gp.mu)
         ret$all.sites$gp.sd <- approxify(object@gatk$gp.sd)
         if ('training.site' %in% colnames(object@gatk) & nrow(object@gatk[training.site==TRUE]) > 0) {
-            tdata <- object@gatk[training.site==TRUE & muttype == 'snv']
+            tdata <- object@gatk[training.site==TRUE & muttype == 'snv', .(af, gp.mu, gp.sd)]
+            ret$training.sites$af <- approxify(tdata$af)
             ret$training.sites$gp.mu <- approxify(tdata$gp.mu)
             ret$training.sites$gp.sd <- approxify(tdata$gp.sd)
         }
@@ -305,7 +314,7 @@ summarize.mapd <- function(object, quiet=FALSE) {
     if (!quiet) cat("Summarizing MAPDs...\n")
     ret <- list(canonical.mapd=NULL, mapds=NULL)
     if (!is.null(object@binned.counts)) {
-        chroms.to.use <- c(get.autosomes(results), get.sex.chroms(results))
+        chroms.to.use <- c(get.autosomes(object), get.sex.chroms(object))
         ret$mapds <- compute.mapds(object@binned.counts$sc[chr %in% chroms.to.use])
         bc.50k <- collapse.binned.counts(binned.counts=object@binned.counts$sc[chr %in% chroms.to.use], n.bins=50)
         bc.50k <- gc.correct(bc.50k)
@@ -318,7 +327,7 @@ summarize.binned.counts <- function(object, quiet=FALSE) {
     if (!quiet) cat("Summarizing binned counts...\n")
     ret <- list(sc=NULL, bulk=NULL)
     if (!is.null(object@binned.counts)) {
-        chroms.to.use <- c(get.autosomes(results), get.sex.chroms(results))
+        chroms.to.use <- c(get.autosomes(object), get.sex.chroms(object))
         ret$sc <- gc.correct(collapse.binned.counts(object@binned.counts$sc[chr %in% chroms.to.use], 100))
         ret$sc <- segment.cbs(ret$sc, genome.string=object@genome.string, method='garvin')
         ret$sc <- mimic.ginkgo(ret$sc)
@@ -401,7 +410,7 @@ summarize.call.mutations.and.mutburden <- function(object,
         #exclude.dbsnp=c(TRUE, FALSE)),
     target.fdrs=10^seq(-5,0,length.out=20), preserve.object=TRUE, quiet=FALSE)
 {
-    if (!quiet) cat("Summarizing mutation calls and mutburden...\n")
+    if (!quiet) cat("Summarizing mutation calls and burden extrapolation...\n")
     ret <- list(suppress.shared.indels=NULL, suppress.all.indels=NULL, metrics=NULL, calls=NULL)
     if (!is.null(object@call.mutations)) {
         ret$suppress.shared.indels <- object@call.mutations$suppress.shared.indels
