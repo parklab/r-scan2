@@ -245,7 +245,14 @@ make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf,
 
             pc <- perfcheck(paste('read and annotate raw data',i), {
                 gatk <- read.tabix.data(path=mmq60.tab, region=gr, quiet=quiet,
-                    colClasses=list(character='chr'))  # force chromosome column to be type=str
+                    # force chromosome column to be type=str and position column to be type=int
+                    # for chrom, forces e.g., 22 -> "22" so that non-numerical (e.g., X/Y)
+                    # chroms can be added.
+                    # for position, refnt, altnt, avoids the default logi type when nrow=0.
+                    # these columns are often used in joins and if they are the wrong type,
+                    # the joins will fail (even though you might think a 0 row join would
+                    # short circuit).
+                    colClasses=list(character=c('chr', 'refnt', 'altnt'), integer='pos'))
 
                 # Columns in GATK are split as site data | sample-specific count data/genotypes
                 # There are 5 site data columns (chr, pos, dbsnp ID, ref allele, alt allele).
@@ -256,10 +263,15 @@ make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf,
                 annotate.gatk.counts(gatk.meta=sitewide, gatk=samplespecific,
                     bulk.sample=dummy.object@bulk, sc.samples=names(dummy.object@config$sc_bams),
                     legacy=mimic_legacy, quiet=quiet)
+                #p(amount=0, class='sticky', paste('counts', i))
                 annotate.gatk(gatk=sitewide, genome.string=dummy.object@genome.string, add.mutsig=TRUE)
+                #p(amount=0, class='sticky', paste('mutsigs', i))
                 annotate.gatk.lowmq(sitewide, path=mmq1.tab, bulk=dummy.object@bulk, region=gr, quiet=quiet)
+                #p(amount=0, class='sticky', paste('lowmq', i))
                 annotate.gatk.phasing(sitewide, phasing.path=phased.vcf, region=gr, quiet=quiet)
+                #p(amount=0, class='sticky', paste('phase info', i))
                 annotate.gatk.panel(sitewide, panel.path=panel, region=gr, quiet=quiet)
+                #p(amount=0, class='sticky', paste('panel', i))
                 snv.sfp <- dummy.object@static.filter.params$snv
                 indel.sfp <- dummy.object@static.filter.params$indel
                 annotate.gatk.candidate.loci(sitewide,
@@ -272,6 +284,7 @@ make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf,
                     indel.max.bulk.af=indel.sfp$max.bulk.af,
                     indel.max.bulk.binom.prob=indel.sfp$max.bulk.binom.prob,
                     mode=ifelse(mimic_legacy, 'legacy', 'new'))
+                #p(amount=0, class='sticky', paste('candidate loci', i))
             }, report.mem=report.mem)
             p(class='sticky', amount=1, pc)
 
