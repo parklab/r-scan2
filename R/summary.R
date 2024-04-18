@@ -16,6 +16,7 @@ setClass("summary.SCAN2", slots=c(
     binned.counts='null.or.list',
     depth.profile='null.or.list',
     gatk='null.or.raw.or.dt',
+    gatk.calls='null.or.dt',
     training.data='null.or.list',
     ab.fits='null.or.list',
     ab.distn='null.or.list',
