@@ -27,8 +27,7 @@ setMethod("passing", "SCAN2", function(x, muttype=c('both', 'snv', 'indel')) {
     if (mt == 'both')
         mt <-c('snv', 'indel')
 
-    data[pass == TRUE & muttype %in% mt]
-    helper.passing(data=data(x), muttype=muttype)
+    data(x)[pass == TRUE & muttype %in% mt]
 })
 
 setMethod("passing", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'indel')) {
@@ -85,7 +84,7 @@ helper.training <- function(data, muttype=c('both', 'snv', 'indel')) {
 # Return the raw data table with all metrics used to call mutations.
 setGeneric("mutsig", function(x, sigtype=c('sbs96', 'id83')) standardGeneric("mutsig"))
 setMethod("mutsig", "SCAN2", function(x, sigtype=c('sbs96', 'id83')) {
-    helper.mutsig(passing(object, muttype='both'), single.cell=x@single.cell, sigtype=sigtype)
+    helper.mutsig(passing(x, muttype='both'), single.cell=x@single.cell, sigtype=sigtype)
 })
 
 setMethod("mutsig", "summary.SCAN2", function(x, sigtype=c('sbs96', 'id83')) {
@@ -194,7 +193,7 @@ setMethod("dp.distn", "list", function(x) {
 setGeneric("mapd", function(x, type=c('curve', 'canonical')) standardGeneric("mapd"))
 setMethod("mapd", "SCAN2", function(x, type=c('curve', 'canonical')) {
     type <- match.arg(type)
-    s <- summarize.mapd(object)
+    s <- summarize.mapd(x)
     if (type == 'canonical')
         setNames(s$canonical.mapd, x@single.cell)
     else
