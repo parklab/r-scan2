@@ -148,6 +148,7 @@ helper.ab.distn <- function(ab, single.cell, type=c('af', 'ab')) {
 }
 
 setMethod("ab.distn", "list", function(x, type=c('af', 'ab')) {
+    type <- match.arg(type)
     classes <- sapply(x, class)
     if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
         stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
