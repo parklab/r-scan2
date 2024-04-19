@@ -1,10 +1,16 @@
 # The summary.SCAN2 class
+setClassUnion('null.or.GRanges', c('NULL', 'GRanges'))
+setClassUnion('null.or.character', c('NULL', 'character'))
 setClassUnion('null.or.list', c('NULL', 'list'))
 setClassUnion('null.or.dt', c('NULL', 'data.table'))
 setClassUnion('null.or.raw.or.dt', c('NULL', 'raw', 'data.table'))
 
 setClass("summary.SCAN2", slots=c(
+    package.version='null.or.character',
+    pipeline.version='null.or.character',
+    config='null.or.list',
     region='null.or.GRanges',
+    analysis.regions='null.or.GRanges',
     genome.string='character',
     genome.seqinfo='null.or.Seqinfo',
     single.cell='character',
@@ -25,7 +31,8 @@ setClass("summary.SCAN2", slots=c(
     cigar.data='null.or.list',
     fdr.prior.data='null.or.list',
     call.mutations.and.mutburden='null.or.list',
-    spatial.sensitivity='null.or.list'
+    spatial.sensitivity='null.or.list',
+    mutsig.rescue='null.or.list'
 ))
 
 setGeneric("summary", function(object) standardGeneric("summary"))
@@ -76,6 +83,10 @@ make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
     object@binned.counts$bulk <- data.table::copy(object@binned.counts$bulk)
 
     summary.object <- new("summary.SCAN2",
+        package.version=object@package.version,
+        pipeline.version=object@pipeline.version,
+        config=object@config,
+        analysis.regions=object@analysis.regions,
         region=object@region,
         genome.string=object@genome.string,
         genome.seqinfo=object@genome.seqinfo,
@@ -103,7 +114,8 @@ make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
         # if preserve.object=TRUE, we will delete some large tables (like
         # spatial.sensitivity$data and binned.counts) to save memory before
         # multithreading.
-        call.mutations.and.mutburden=summarize.call.mutations.and.mutburden(object, preserve.object=preserve.object, quiet=quiet)
+        call.mutations.and.mutburden=summarize.call.mutations.and.mutburden(object, preserve.object=preserve.object, quiet=quiet),
+        mutsig.rescue=NULL
     )
 
     if (FALSE) {
