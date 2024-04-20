@@ -875,7 +875,7 @@ setMethod("call.mutations", "SCAN2", function(object, target.fdr=0.01, quiet=FAL
 
     # Rescue hasn't happened (or if it has, reset it), so introduce the rescue column
     # for consistency.
-    object@gatk[, rescue := FALSE]
+    object@gatk[, c('rweight', 'rescue.fdr', 'rescue') := list(NA, NA, FALSE)]
 
 
     # NAs are especially present in legacy output where not all sites
@@ -1021,32 +1021,5 @@ setMethod("compute.sensitivity.models", "SCAN2", function(object) {
     object@spatial.sensitivity$somatic.sensitivity <- ss
     object@spatial.sensitivity$burden <- burdens
 
-    object
-})
-
-setGeneric("is.compressed", function(object) standardGeneric("is.compressed"))
-setMethod("is.compressed", "SCAN2", function(object) {
-    is.raw(object@gatk)
-})
-
-
-setGeneric("compress", function(object) standardGeneric("compress"))
-setMethod("compress", "SCAN2", function(object) {
-    if (!is.compressed(object)) {
-        object@gatk <- qs::qserialize(object@gatk)
-    } else {
-        warning('object already compressed, skipping compression')
-    }
-    object
-})
-
-
-setGeneric("decompress", function(object) standardGeneric("decompress"))
-setMethod("decompress", "SCAN2", function(object) {
-    if (is.compressed(object)) {
-        object@gatk <- qs::qdeserialize(object@gatk)
-    } else {
-        warning('object already decompressed, skipping decompression')
-    }
     object
 })
