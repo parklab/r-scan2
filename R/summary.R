@@ -40,20 +40,6 @@ setMethod("summary", "SCAN2", function(object) {
     make.summary.scan2(object)
 })
 
-# More general than the compress method in scan2.R (which is slated to be removed).
-compress.dt <- function(x) {
-    if (is.raw(x))
-        return(x)
-    else
-        qs::qserialize(x)
-}
-
-decompress.dt <- function(x) {
-    if (is.data.table(x))
-        return(x)
-    else
-        qs::qdeserialize(x)
-}
 
 # preserve.object - Keep the input SCAN2 `object' in tact while summarizing.  If
 #                   preserve.object=FALSE, the input object will be invalid in
@@ -74,9 +60,6 @@ decompress.dt <- function(x) {
 #                   analysis object already saved to disk, so that overwriting it
 #                   (in memory) does not lose any information.
 make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
-    if (is.compressed(object))
-        stop("summarize requires an uncompressed object")
-
     # Unfortunate - if object is loaded from disk, these data.tables cannot
     # have new columns added to them, which is necessary for summarization.
     object@binned.counts$sc <- data.table::copy(object@binned.counts$sc)
@@ -118,23 +101,6 @@ make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
         mutsig.rescue=NULL
     )
 
-    if (FALSE) {
-        # XXX: This doesn't really help. R does not release memory once allocated
-        # by the OS and does not seem to lower its garbage collection trigger either,
-        # so freeing the two large tables below doesn't do anything.
-        #
-        # To save RAM, delete two large tables that aren't necessary
-        # (currently) for either mutation burden estimation or mutation calling.
-        if (!preserve.object) {
-            if (!quiet)
-                cat("preserve.object=FALSE: deleting @binned.counts and @spatial.sensitivity\n")
-            object@binned.counts <- NULL
-            object@spatial.sensitivity <- NULL
-        }
-        summary.object@call.mutations.and.mutburden <-
-            summarize.call.mutations.and.mutburden(object, preserve.object=preserve.object, quiet=quiet)
-    }
-
     summary.object
 }
 
@@ -144,6 +110,132 @@ setValidity("summary.SCAN2", function(object) {
 
 setMethod("show", "summary.SCAN2", function(object) {
 })
+
+
+# More general than the compress method in scan2.R (which is slated to be removed).
+compress.dt <- function(x) {
+    if (is.raw(x))
+        return(x)
+    else
+        qs::qserialize(x)
+}
+
+decompress.dt <- function(x) {
+    if (is.data.table(x))
+        return(x)
+    else
+        qs::qdeserialize(x)
+}
+
+# Nothing special here, just convenience to:
+#   1. read a single summary if len(paths)=1
+#   2. return a named list of summary objects where name=sample ID
+#   3. if `paths` is missing, read all *.rda files in the current directory
+#      and return those that contain only a single object of class=summary.SCAN2.
+#      if there are large, non-summary.SCAN2 objects in the directory loading
+#      could be seriously delayed.
+load.summary <- function(paths, quiet=FALSE) {
+    if (missing(paths)) {
+        paths <- list.files(path='.', pattern='.rda$')
+    }
+
+    ret <- lapply(paths, function (path) {
+        if (!quiet)
+            print(path)
+        smry <- get(load(path))
+        if (class(smry) != 'summary.SCAN2') {
+            warning(paste0("got non-summary.SCAN2 object at path '", path, "'.  ignoring."))
+            return(NA)
+        } else {
+            return(smry)
+        }
+    })
+    ret <- ret[!is.na(ret)]
+    ret <- setNames(ret, sapply(ret, slot, 'single.cell'))
+
+    if (length(paths) == 1) {
+        ret <- ret[[1]]
+    }
+    ret
+}
+
+
+# Really poor but simple lossy compression of values in [0,1] with support
+# for NA.
+# quantize.raw1 represents x as a single byte.
+# This currently means rounding to the hundredths place,
+# quantizing the vector into 101 possible values. E.g.:
+#    0.abcdefg...   ->   0.aB   ->   aB
+# where B is the result of round()ing - either b or b+1.
+# NA values are encoded as 255.
+#
+# Reduces a float vector from 8 bytes per entry to 1:
+#     > object.size(z)/1e6
+#     24.8 bytes
+#     > qr <- quantize.raw1(z)
+#     > object.size(qr)/1e6
+#     3.1 bytes
+#     > uqr <- unquantize.raw1(z)
+#     > object.size(uqr)/1e6
+#     24.8 bytes
+quantize.raw1 <- function(x) as.raw(ifelse(is.na(x), 255, as.integer(100*round(x, 2))))
+unquantize.raw1 <- function(x) ifelse(x == 255, NA, as.numeric(x)/100)
+
+# quantize x using 2 bytes. NOTE: doubles the length of x
+quantize.raw2 <- function(x) {
+    # map x -> i is in [0, 10,000] or 65,535 if x=NA
+    i <- ifelse(is.na(x), 65535, as.integer(10000*round(x, 4)))
+    as.raw(as.vector(
+        rbind(
+            bitwAnd(i, 0x00FF),                 # lower byte
+            bitwShiftR(bitwAnd(i, 0xFF00), 8)   # upper byte
+        )
+    ))
+}
+# this is really slow. the matrix version is only slightly slower than
+# the current version.  however, still orders of magnitude faster than
+# loading a full object.
+unquantize.raw2 <- function(x) {
+    #ret <- colSums(matrix(as.integer(x), nrow=2)*c(1,256))/10000
+    ret <- readBin(x, size=2, n=length(x)/2, what='integer', signed=FALSE)
+    ifelse(ret == 65535, NA, ret/10000)
+}
+
+
+# The spatial sensitivity table is very large due to its high resolution
+# (~1kb).  To avoid spending most of the summary object's memory budget,
+# use a couple of tricks (including lossy compression) to reduce the table
+# size >10-fold.
+#
+# q - the quantize.rawN lossy compression function for compressing sens. values
+#   quantize.raw1 has 2 digit precision - [0.00 - 0.99, 1]
+#   quantize.raw2 has 4 digit precision - [0.0000 - 0.9999, 1]
+compress.spatial.sens <- function(tab, q=quantize.raw2) {
+    # run length encoding essentially removes this column
+    list(chrom.rle=rle(tab$chr),          
+        dt1=compress.dt(tab[,.(start, end)]),   # start and end are uncompressed
+        # dt2 is longer than dt1 if quantize.raw2 is used (twice as long)
+        dt2=compress.dt(
+            data.table(
+                pred.snv.maj=q(tab$pred.snv.maj),
+                pred.snv.min=q(tab$pred.snv.min),
+                pred.indel.maj=q(tab$pred.indel.maj),
+                pred.indel.min=q(tab$pred.indel.min)
+            )
+        )
+    )
+}
+
+# inverse of above function
+decompress.spatial.sens <- function(comptab, unq=unquantize.raw2) {
+    dt1 <- decompress.dt(comptab$dt1)
+    dt2 <- decompress.dt(comptab$dt2)
+    cbind(chr=inverse.rle(comptab$chrom.rle), dt1,
+        pred.snv.maj=unq(dt2$pred.snv.maj),
+        pred.snv.min=unq(dt2$pred.snv.min),
+        pred.indel.maj=unq(dt2$pred.indel.maj),
+        pred.indel.min=unq(dt2$pred.indel.min))
+}
 
 
 # approximate the vector `x` by rounding its values to `n.digits` decimal
@@ -507,7 +599,7 @@ summarize.spatial.sensitivity <- function(object, quiet=FALSE) {
         # to match whatever tile.genome returns. Seems the space tradeoff isn't worth making things
         # more brittle.
         ret$predicted.sensitivity <-
-            compress.dt(ss$data[,.(chr,start,end,pred.snv.maj,pred.snv.min, pred.indel.maj, pred.indel.min)])
+            compress.spatial.sens(ss$data[,.(chr,start,end,pred.snv.maj,pred.snv.min, pred.indel.maj, pred.indel.min)])
     }
     ret
 }
