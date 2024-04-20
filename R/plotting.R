@@ -687,49 +687,87 @@ helper.plot.mutburden <- function(tab) {
 # expect.
 ###############################################################################
 
-setGeneric('plot.binned.counts', function(object, type=c('count', 'ratio', 'ratio.gcnorm', 'cnv')) standardGeneric('plot.binned.counts'))
+setGeneric('plot.binned.counts', function(x, type=c('count', 'ratio', 'ratio.gcnorm', 'cnv')) standardGeneric('plot.binned.counts'))
 setMethod('plot.binned.counts', 'SCAN2',
-    function(object, type=c('count', 'ratio', 'ratio.gcnorm', 'cnv'))
+    function(x, type=c('cnv', 'count', 'ratio', 'ratio.gcnorm'))
 {
-    bc <- summarize.binned.counts(object, quiet=FALSE)$sc
-    helper.plot.binned.counts(bc, sample.name=object@single.cell, type=type)
+    bc <- summarize.binned.counts(x, quiet=FALSE)$sc
+    helper.plot.binned.counts(bc, sample.name=x@single.cell, type=type)
 })
 
 setMethod('plot.binned.counts', 'summary.SCAN2',
-    function(object, type=c('count', 'ratio', 'ratio.gcnorm', 'cnv'))
+    function(x, type=c('cnv', 'count', 'ratio', 'ratio.gcnorm'))
 {
-    helper.plot.binned.counts(object@binned.counts$sc, sample.name=object@single.cell, type=type)
+    helper.plot.binned.counts(x@binned.counts$sc, sample.name=x@single.cell, type=type)
 })
 
-helper.plot.binned.counts <- function(binned.counts, sample.name, type=c('count', 'ratio', 'ratio.gcnorm', 'cnv'), ...) {
+setMethod('plot.binned.counts', 'list',
+    function(x, type=c('cnv', 'count', 'ratio', 'ratio.gcnorm'))
+{
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 xs only')
+    }
+
+    max.nrow <- min(length(x), 7)
+    layout(matrix(1:(ceiling(length(x)/max.nrow)*max.nrow), nrow=max.nrow))
+    for (object in x)
+        helper.plot.binned.counts(object@binned.counts$sc, sample.name=object@single.cell, type=type)
+})
+
+helper.plot.binned.counts <- function(binned.counts, sample.name, ylim, ylab, type=c('cnv', 'count', 'ratio', 'ratio.gcnorm'), ...) {
     chrs.in.order <- binned.counts[!duplicated(chr)]$chr
     type <- match.arg(type)
 
     colmap <- setNames(head(rep(c('black','#666666'), length(chrs.in.order)), length(chrs.in.order)),
         chrs.in.order)
 
-    par(mar=c(1/2,4,1/2,1))
-    if (type == 'cnv')
+    # cns: 2 = normal
+    cns <- rep(NA, nrow(binned.counts))
+    if ('garvin.seg.integer' %in% names(binned.counts)) {
+        cns <- binned.counts$garvin.seg.integer
+    }
+
+    if (type == 'cnv') {
+        if (missing(ylim))
+            ylim <- c(0, 6)
         points <- binned.counts[['garvin.ratio.gcnorm.ploidy']]
-    else
+        if (missing(ylab)) ylab <- 'Copy number'
+    } else {
         points <- binned.counts[[type]]
+        if (type == 'ratio' || type == 'ratio.gcnorm') {
+            points <- log2(points)
+            cns <- log2(ifelse(cns == 0, -log2(3), cns/2))
+            if (missing(ylim))
+                ylim <- c(-log2(3),log2(3))      # corresponds to [~0, 6]
+            if (missing(ylab)) ylab <- 'log2(read depth ratio)'
+        } else {
+            points <- points * binned.counts[,
+            # Attempt a useful default: trim top and bottom 10%
+            ylim <- range(pretty(quantile(points, probs=c(0.00, 0.99), na.rm=TRUE)))
+            if (missing(ylab)) ylab <- 'Read count'
+        }
+    }
 
-    if (type == 'ratio' || type == 'ratio.gcnorm')
-        points <- log2(points)
-
-    plot(points,
-        col=colmap[binned.counts$chr], pch=20, cex=1/2,
+    par(mar=c(1/2,4,1/2,1))
+    restricted.points <- pmin(pmax(points, ylim[1]), ylim[2])
+    plot(restricted.points,
+        col=colmap[binned.counts$chr],
+        pch=ifelse(points == restricted.points, 16, 1),
+        cex=1/2,
         xaxt='n', xaxs='i',
-        ylab='log2(read depth ratio)', ...)
+        ylab=ylab, ...)
     abline(v=which(c(binned.counts$chr, NA) != c(NA, binned.counts$chr)), col='#AAAAAA')
 
     axis.posns <- c(0, cumsum(binned.counts[,.(pos=nrow(.SD)),by=chr]$pos))
-    text(y=-3.25, x=axis.posns[-length(axis.posns)] + diff(axis.posns)/2, labels=chrs.in.order, pos=3)
-    legend('topleft', bty='n', legend=sample.name)
+    # adj=(0, 0.3) - nudge up slightly
+    text(y=ylim[1], x=axis.posns[-length(axis.posns)] + diff(axis.posns)/2, labels=chrs.in.order, adj=c(0, 0.3)) #, pos=3)
 
-    if (type == 'cnv' && 'garvin.seg.integer' %in% names(binned.counts)) {
-        lines(binned.counts$garvin.seg.integer, lwd=2, col=2)
+    if (type != 'count') {
+        lines(cns, lwd=2, col=2)
     }
+
+    legend('topleft', bty='n', legend=sample.name)
 }
 
 
