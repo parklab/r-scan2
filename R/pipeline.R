@@ -562,11 +562,6 @@ make.permuted.mutations <- function(sc.sample, muts, callable.bed, genome.string
 #     object.paths must be a NAMED VECTOR for which the element names point to the
 #     desired OUTPUT .RDA FILES and the elements themselves are the inputs.
 #
-#     N.B. using compressed objects can be counterproductive. During decompression, peak
-#     memory usage is size(compressed table) + size(decompressed table) + size(object).
-#     Just loading a decompressed object to begin with removes the compress table size at
-#     peak.  Typical values for humans are: compressed table ~ 900 MB, decompressed table ~
-#     2500 MB, rest of object negligible.
 # add.muts - a data.table of additional somatic mutations for creating the true somatic
 #     mutation signature.  This allows the possibility of including muts from other PTA single
 #     cell projects, or even different technologies (e.g., NanoSeq, META-CS), so long as the
@@ -626,8 +621,6 @@ mutsig.rescue <- function(object.paths, add.muts, rescue.target.fdr=0.01,
         gatks <- future.apply::future_lapply(1:length(object.paths), function(i) {
             pc <- perfcheck(paste('prepare.object',i), {
                 x <- get(load(object.paths[i]))
-                if (is.compressed(x))
-                    x <- decompress(x)
                 ret <- reduce.table(x@gatk, target.fdr=x@call.mutations$target.fdr)
             }, report.mem=report.mem)
             p(class='sticky', amount=1, pc)
@@ -680,29 +673,22 @@ mutsig.rescue <- function(object.paths, add.muts, rescue.target.fdr=0.01,
         results <- future.apply::future_lapply(1:length(object.paths), function(i) {
             pc <- perfcheck(paste('mutsig.rescue.one',i), {
                 x <- get(load(object.paths[i]))
-                if (is.compressed(x))
-                    x <- decompress(x)
-                # some old objects don't have this slot; making it doesn't change the correctness of the code
-                x@mutsig.rescue <- NULL   
-                # there is some very odd data.table behavior that causes data.tables
-                # loaded from disk to not be editable by reference.  data.table
-                # recommends running setDT(), but this doesn't work for object@gatk.
-                # attr(results@gatk, '.internal.selfref') is nil and it seems no
-                # amount of messing with it will allow me to edit it.
-                # I have also tried setalloccol() with no luck; changing mutsig.rescue.one() to
-                # return a small data.table which is then joined onto x@gatk in this function
-                # to avoid issues with function scope; etc.  Nothing worked except the below
-                # (which is VERY bad): using <- assignment (an equivalent := assignment by
-                # reference does NOT work).
-                x@gatk$rescue <- FALSE   # this will be updated by mutsig.rescue.one where appropriate
-                # Why is this bad? it copies the data.table, doubling the memory use
-                # of a 2.5-3.0 GB object. This simply won't be usable on something like
-                # a mouse SCAN2 object with full SNP table.
+
+                # Old note, no longer applicable, but informative:
+                # DO NOT add any new columns to x@gatk, instead ensure that all necessary
+                # columns exist after call.mutations() with NA/blank values.  This is because:
+                # data.tables loaded from disk are not editable by reference because
+                # there are no pre-allocated empty column pointers (see truelength(dt)).
+                # as far as i can tell, there is no way to change the truelength() of a
+                # data.table loaded from disk.  setalloccol() does not work.
+                #    use options(datatable.verbose = TRUE) for debugging
                 #
-                # The unfortunate result of all this is we need ~6 GB per core to
+                # the line below causes x@gatk to be copied [update: this is no longer
+                # true since the rescue column is created in call.mutations], doubling the memory
+                # used by x, which is 2.5-3.0Gb for a human.
+                # The unfortunate result of all this is ~6 GB per core is necessary to
                 # comfortably run this pipeline for human cells.
-                #
-                # use options(datatable.verbose = TRUE) for debugging
+                x@gatk$rescue <- FALSE   # this will be updated by mutsig.rescue.one where appropriate
     
                 for (mt in muttypes) {
                     x@mutsig.rescue[[mt]] <- mutsig.rescue.one(x,
