@@ -742,7 +742,6 @@ helper.plot.binned.counts <- function(binned.counts, sample.name, ylim, ylab, ty
                 ylim <- c(-log2(3),log2(3))      # corresponds to [~0, 6]
             if (missing(ylab)) ylab <- 'log2(read depth ratio)'
         } else {
-            points <- points * binned.counts[,
             # Attempt a useful default: trim top and bottom 10%
             ylim <- range(pretty(quantile(points, probs=c(0.00, 0.99), na.rm=TRUE)))
             if (missing(ylab)) ylab <- 'Read count'
