@@ -38,11 +38,7 @@ setMethod("show.gatk", "SCAN2", function(object) {
     if (is.null(object@gatk)) {
         cat(" (no data)\n")
     } else {
-        if (is.compressed(object)) {
-            cat(' (compressed)\n')
-        } else {
-            cat('', nrow(object@gatk), "raw sites\n")
-        }
+        cat('', nrow(object@gatk), "raw sites\n")
     }
 })
 
@@ -50,32 +46,28 @@ setMethod("show.gatk", "SCAN2", function(object) {
 setGeneric("show.abmodel.training.sites", function(object) standardGeneric("show.abmodel.training.sites"))
 setMethod("show.abmodel.training.sites", "SCAN2", function(object) {
     cat("#   AB model training hSNPs:")
-    if (is.compressed(object)) {
-        cat(' (table compressed)\n')
+    if (!('training.site' %in% colnames(object@gatk))) {
+        cat(" (no data)\n")
+    } else if (nrow(object@gatk[training.site==TRUE]) == 0) {
+        cat(" (training data removed, likely minimized SCAN2 object)\n")
     } else {
-        if (!('training.site' %in% colnames(object@gatk))) {
-            cat(" (no data)\n")
-        } else if (nrow(object@gatk[training.site==TRUE]) == 0) {
-            cat(" (training data removed, likely minimized SCAN2 object)\n")
-        } else {
-            # germline indels are not used for AB model training
-            per.hap <- object@gatk[training.site==TRUE & muttype == 'snv', .N, by=phased.gt]
-            tdata <- object@gatk[training.site==TRUE & muttype=='snv']
-            cat('', nrow(tdata),
-                sprintf("phasing: %s=%d, %s=%d\n",
-                    per.hap$phased.gt[1], per.hap$N[1],
-                    per.hap$phased.gt[2], per.hap$N[2]))
-            neighbor.approx <- approx.abmodel.covariance(object, bin.breaks=10^(0:5))
-            cors <- round(neighbor.approx$observed.cor, 3)
-                cat('#       OBSERVED VAF correlation between neighboring hSNPs:\n')
-            cat('#           <10 bp', cors[1], '<100 bp', cors[2],
-                '<1000 bp', cors[3], '<10 kbp', cors[4], '<100 kbp', cors[5], '\n')
-            if ('resampled.training.site' %in% colnames(object@gatk)) {
-                cat('#        ', nrow(object@gatk[resampled.training.site == TRUE & muttype == 'snv']),
-                    'resampled hSNPs\n')
-                cat('#        ', nrow(object@gatk[resampled.training.site == TRUE & muttype == 'indel']),
-                    'resampled hIndels\n')
-            }
+        # germline indels are not used for AB model training
+        per.hap <- object@gatk[training.site==TRUE & muttype == 'snv', .N, by=phased.gt]
+        tdata <- object@gatk[training.site==TRUE & muttype=='snv']
+        cat('', nrow(tdata),
+            sprintf("phasing: %s=%d, %s=%d\n",
+                per.hap$phased.gt[1], per.hap$N[1],
+                per.hap$phased.gt[2], per.hap$N[2]))
+        neighbor.approx <- approx.abmodel.covariance(object, bin.breaks=10^(0:5))
+        cors <- round(neighbor.approx$observed.cor, 3)
+            cat('#       OBSERVED VAF correlation between neighboring hSNPs:\n')
+        cat('#           <10 bp', cors[1], '<100 bp', cors[2],
+            '<1000 bp', cors[3], '<10 kbp', cors[4], '<100 kbp', cors[5], '\n')
+        if ('resampled.training.site' %in% colnames(object@gatk)) {
+            cat('#        ', nrow(object@gatk[resampled.training.site == TRUE & muttype == 'snv']),
+                'resampled hSNPs\n')
+            cat('#        ', nrow(object@gatk[resampled.training.site == TRUE & muttype == 'indel']),
+                'resampled hIndels\n')
         }
     }
 })
@@ -99,24 +91,20 @@ setMethod("show.abmodel.params", "SCAN2", function(object) {
 setGeneric("show.abmodel.ab.distn", function(object) standardGeneric("show.abmodel.ab.distn"))
 setMethod("show.abmodel.ab.distn", "SCAN2", function(object) {
     cat("#   Allele balance:")
-    if (is.compressed(object)) {
-        cat(' (table compressed)\n')
-    } else { 
-        if (is.null(object@ab.estimates)) {
-            cat(" (not computed)\n")
-        } else {
-            s <- summary(object@gatk$gp.sd)
-            cat('\n#       mean (0 is neutral):',
-                round(mean(object@gatk$gp.mu), 3), '\n')
-            cat('#       uncertainty (Q25, median, Q75):',
-                round(s['1st Qu.'], 3),
-                round(s['Median'], 3),
-                round(s['3rd Qu.'], 3), '\n')
-            if ('training.site' %in% colnames(object@gatk) & nrow(object@gatk[training.site==TRUE]) > 0) {
-                xs <- round(object@gatk[training.site==TRUE & muttype == 'snv',
-                    .(mean=mean(gp.mu), cor=cor(af, ab, use='complete.obs'))],3)
-                cat('#       mean at training hSNPs:', xs$mean, '\n')
-            }
+    if (is.null(object@ab.estimates)) {
+        cat(" (not computed)\n")
+    } else {
+        s <- summary(object@gatk$gp.sd)
+        cat('\n#       mean (0 is neutral):',
+            round(mean(object@gatk$gp.mu), 3), '\n')
+        cat('#       uncertainty (Q25, median, Q75):',
+            round(s['1st Qu.'], 3),
+            round(s['Median'], 3),
+            round(s['3rd Qu.'], 3), '\n')
+        if ('training.site' %in% colnames(object@gatk) & nrow(object@gatk[training.site==TRUE]) > 0) {
+            xs <- round(object@gatk[training.site==TRUE & muttype == 'snv',
+                .(mean=mean(gp.mu), cor=cor(af, ab, use='complete.obs'))],3)
+            cat('#       mean at training hSNPs:', xs$mean, '\n')
         }
     }
 })
@@ -156,21 +144,17 @@ setMethod("show.cigar.data", "SCAN2", function(object) {
 setGeneric("show.static.filters", function(object) standardGeneric("show.static.filters"))
 setMethod("show.static.filters", "SCAN2", function(object) {
     cat("#   Static filters: ")
-    if (is.compressed(object)) {
-        cat(' (table compressed)\n')
+    if (!('static.filter' %in% colnames(object@gatk))) {
+        cat("(not applied)\n")
     } else {
-        if (!('static.filter' %in% colnames(object@gatk))) {
-            cat("(not applied)\n")
-        } else {
-            if ('mode' %in% names(object@static.filter.params))  # supporting older versions of SCAN2 objects
-                cat(paste0('mode=', object@static.filter.params$mode))
-            cat('\n')
-            na.or.val <- function(x, val=0) ifelse(is.na(x), val, x)
-            for (mt in c('snv', 'indel')) {
-                tb <- table(object@gatk[muttype == mt, static.filter], useNA='always')
-                cat(sprintf('#       %6s: %8d retained %8d removed %8d NA\n',
-                    mt, na.or.val(tb['TRUE']), na.or.val(tb['FALSE']), na.or.val(tb['NA'])))
-            }
+        if ('mode' %in% names(object@static.filter.params))  # supporting older versions of SCAN2 objects
+            cat(paste0('mode=', object@static.filter.params$mode))
+        cat('\n')
+        na.or.val <- function(x, val=0) ifelse(is.na(x), val, x)
+        for (mt in c('snv', 'indel')) {
+            tb <- table(object@gatk[muttype == mt, static.filter], useNA='always')
+            cat(sprintf('#       %6s: %8d retained %8d removed %8d NA\n',
+                mt, na.or.val(tb['TRUE']), na.or.val(tb['FALSE']), na.or.val(tb['NA'])))
         }
     }
 })
