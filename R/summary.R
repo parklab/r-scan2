@@ -302,7 +302,7 @@ summarize.gatk <- function(object, quiet=FALSE) {
         list(nrows=NULL)
     } else {
         ret$gatk.info <- list(nrows=nrow(object@gatk))
-        ret$gatk.calls <- object@gatk[pass == TRUE | rescue == TRUE],    
+        ret$gatk.calls <- object@gatk[pass == TRUE | rescue == TRUE]
         ret$filtered.gatk <- filter.gatk.and.nearby.hets(object)
     }
     ret
