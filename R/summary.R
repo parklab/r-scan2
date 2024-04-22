@@ -77,14 +77,12 @@ make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
         bulk=object@bulk,
         sex=object@sex,
         amplification=object@amplification,
-        raw.gatk=summarize.gatk(object, quiet=quiet),
+        raw.gatk=NULL,
         mapd=summarize.mapd(object, quiet=quiet),
         binned.counts=summarize.binned.counts(object, quiet=quiet),
         depth.profile=summarize.depth.profile(object, quiet=quiet),
-        # an uncompressed, tiny table of only called mutations for fast access
-        # must be kept up-to-date by, e.g., rescue.
-        gatk.calls=object@gatk[pass == TRUE | rescue == TRUE],    
-        gatk=filter.gatk.and.nearby.hets(object),
+        gatk.calls=NULL,
+        gatk=NULL,
         training.data=summarize.training.data(object, quiet=quiet),
         ab.fits=summarize.ab.fits(object, quiet=quiet),
         ab.distn=summarize.ab.distn(object, quiet=quiet),
@@ -101,6 +99,15 @@ make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
         mutsig.rescue=object@mutsig
     )
 
+    gatk.summary <- summarize.gatk(object, quiet=quiet)
+
+    summary.object@gatk.info <- gatk.summary$gatk.info    # counts of various things
+    # an uncompressed, tiny table of only called mutations for fast access
+    # must be kept up-to-date by, e.g., rescue.
+    summary.object@gatk.calls <- gatk.summary$gatk.calls
+    # a compressed subset of the full gatk table
+    summary.object@gatk <- gatk.summary$filtered.gatk
+
     summary.object
 }
 
@@ -112,7 +119,7 @@ setMethod("show", "summary.SCAN2", function(object) {
 })
 
 
-# More general than the compress method in scan2.R (which is slated to be removed).
+# Compress/decompress data.tables.
 compress.dt <- function(x) {
     if (is.raw(x))
         return(x)
@@ -289,12 +296,16 @@ filter.gatk.and.nearby.hets <- function(object, flank=2500, quiet=FALSE) {
 
 # Maybe one day tabulate snvs, indels, training sites, etc. For now pretty useless.
 summarize.gatk <- function(object, quiet=FALSE) {
+    ret <- list(gatk.info=NULL, gatk.calls=NULL, gatk=NULL)
     if (!quiet) cat("Summarizing raw GATK read count table...\n")
     if (is.null(object@gatk)) {
         list(nrows=NULL)
     } else {
-        list(nrows=nrow(object@gatk))
+        ret$gatk.info <- list(nrows=nrow(object@gatk))
+        ret$gatk.calls <- object@gatk[pass == TRUE | rescue == TRUE],    
+        ret$filtered.gatk <- filter.gatk.and.nearby.hets(object)
     }
+    ret
 }
 
 summarize.training.data <- function(object, quiet=FALSE) {
