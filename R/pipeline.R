@@ -621,7 +621,7 @@ mutsig.rescue <- function(object.paths, add.muts, rescue.target.fdr=0.01,
         gatks <- future.apply::future_lapply(1:length(object.paths), function(i) {
             pc <- perfcheck(paste('prepare.object',i), {
                 x <- get(load(object.paths[i]))
-                ret <- reduce.table(x@gatk, target.fdr=x@call.mutations$target.fdr)
+                ret <- reduce.table(data(x), target.fdr=x@call.mutations$target.fdr)
             }, report.mem=report.mem)
             p(class='sticky', amount=1, pc)
 
@@ -671,25 +671,11 @@ mutsig.rescue <- function(object.paths, add.muts, rescue.target.fdr=0.01,
         p <- progressr::progressor(along=1:length(object.paths))
         p(amount=0, class='sticky', perfcheck(print.header=TRUE))
         results <- future.apply::future_lapply(1:length(object.paths), function(i) {
+            # Summary of old note: do not add any new columns to x@gatk in this
+            # lapply. Because the objects are loaded from disk, data.table cannot
+            # add a new column duplicating copying the entire 2.5-3.0 Gb data.table.
             pc <- perfcheck(paste('mutsig.rescue.one',i), {
                 x <- get(load(object.paths[i]))
-
-                # Old note, no longer applicable, but informative:
-                # DO NOT add any new columns to x@gatk, instead ensure that all necessary
-                # columns exist after call.mutations() with NA/blank values.  This is because:
-                # data.tables loaded from disk are not editable by reference because
-                # there are no pre-allocated empty column pointers (see truelength(dt)).
-                # as far as i can tell, there is no way to change the truelength() of a
-                # data.table loaded from disk.  setalloccol() does not work.
-                #    use options(datatable.verbose = TRUE) for debugging
-                #
-                # the line below causes x@gatk to be copied [update: this is no longer
-                # true since the rescue column is created in call.mutations], doubling the memory
-                # used by x, which is 2.5-3.0Gb for a human.
-                # The unfortunate result of all this is ~6 GB per core is necessary to
-                # comfortably run this pipeline for human cells.
-                x@gatk$rescue <- FALSE   # this will be updated by mutsig.rescue.one where appropriate
-    
                 for (mt in muttypes) {
                     x@mutsig.rescue[[mt]] <- mutsig.rescue.one(x,
                         muttype=mt,
@@ -703,15 +689,14 @@ mutsig.rescue <- function(object.paths, add.muts, rescue.target.fdr=0.01,
             results <- x
             save(results, file=names(object.paths)[i], compress=FALSE)
 
-            # add in sample ID and bulk ID in anticipation of the batch-wide
-            # mutation tables.
-            results@gatk$sample <- results@single.cell
-            results@gatk$bulk.sample <- results@bulk
-            # can't have sample names in columns - rbind would like uniform column names
-            colnames(results@gatk)[colnames(results@gatk) == results@single.cell] <- 'scgt'
+            # Make a MUCH smaller table that can be modified without duplication.
+            calls.tab <- results@gatk[pass == TRUE | rescue == TRUE]
+            calls.tab$sample <- results@single.cell
+            calls.tab$bulk.sample <- results@bulk
+            colnames(calls.tab)[colnames(calls.tab) == results@single.cell] <- 'scgt'
             ret <- list(
                 sample=results@single.cell,
-                muts=results@gatk[pass == TRUE | rescue == TRUE],
+                muts=calls.tab,
                 # one entry for each mutation type (snv, indel)
                 sig.homogeneity.test=
                     setNames(lapply(results@mutsig.rescue, function(msr) msr$sig.homogeneity.test),
