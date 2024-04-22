@@ -98,7 +98,7 @@ make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
         # spatial.sensitivity$data and binned.counts) to save memory before
         # multithreading.
         call.mutations.and.mutburden=summarize.call.mutations.and.mutburden(object, preserve.object=preserve.object, quiet=quiet),
-        mutsig.rescue=NULL
+        mutsig.rescue=object@mutsig
     )
 
     summary.object
