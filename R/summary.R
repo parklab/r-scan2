@@ -256,22 +256,34 @@ approxify <- function(x, n.digits=3) {
 unapproxify <- function(a) rep(as.numeric(names(a)), a)
 
 
-# The full @gatk table is too big to put in a summary object. HOWEVER,
-# we would like to enable certain explorative analyses, e.g., plotting
-# the local region and AB model around candidate and called mutations.
+# The full @gatk table is too big to put in a summary object. Keep enough
+# sites to allow:
+#   * plotting the local region and AB model around candidate and called mutations.
+#   * mutation signature-based rescue
+#       - this is performed on sites that only fail lysis.fdr <= cutoff test
 #
-# For this filtration, it'd be nice to retain the same order as the
-# @gatk table.
-filter.gatk.and.nearby.hets <- function(object, flank=1e4, quiet=FALSE) {
+# Retain the order of the original @gatk table.
+filter.gatk.and.nearby.hets <- function(object, flank=2500, quiet=FALSE) {
     if (!quiet) cat("Retaining candidate sites passing static filters and nearby germline hets...\n")
-    flt <- object@gatk[static.filter == TRUE]
+    #som.idxs <- object@gatk[, which(somatic.candidate & dp.test & min.sc.alt.test & abc.test & dbsnp.test & (muttype=='snv'|csf.test))]
+    # new: try to retain mosaic sites. it is important to continue to retain all sites
+    # that could be rescued by mutation signature.  the bulk.af filter
+    som.idxs <- object@gatk[, which(((somatic.candidate & abc.test) | (bulk.binom.prob <= 1e-6 & bulk.af < 0.25)) & dp.test & dbsnp.test & min.sc.alt.test & (muttype == 'snv' | csf.test))]
+    flt <- object@gatk[som.idxs, .(chr, pos)]
     gflt <- flank(GRanges(seqnames=flt$chr, ranges=IRanges(start=flt$pos, width=1)),
         both=TRUE, width=flank)
 
     gr <- GRanges(seqnames=object@gatk$chr, ranges=IRanges(start=object@gatk$pos, width=1))
+    ols <- countOverlaps(gr, gflt)
+    fl.idxs <- object@gatk[, which(ols > 0 & training.site == TRUE)]
 
-    idxs.to.keep <- unique(to(findOverlaps(gflt, gr)))
-    ret <- object@gatk[idxs.to.keep][static.filter == TRUE | training.site==TRUE]
+    # KEEP:
+    #   * all somatics sites passing above filters
+    #   * all training sites within `flank` bp of an above somatic site
+    #   * all resampled training sites, regardless of position
+    idxs.to.keep <- sort(union(union(som.idxs, fl.idxs),
+              which(object@gatk$resampled.training.site)))
+    ret <- object@gatk[idxs.to.keep]
     compress.dt(ret)
 }
 
