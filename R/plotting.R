@@ -213,7 +213,7 @@ setMethod("plot.region", "summary.SCAN2", function(object, site=NA, chrom=NA, po
     check.slots(object, c('gatk'))
     if (recompute)
         check.slots(object, 'ab.fits')
-    gatk <- qs::qdeserialize(object@gatk)
+    gatk <- decompress.dt(object@gatk)
     ab.fits <- ab.fits(object)
     helper.plot.region(gatk=gatk, ab.fits=ab.fits, site=site, chrom=chrom, position=position,
         upstream=upstream, downstream=downstream, gp.extend=gp.extend, n.gp.points=n.gp.points,
