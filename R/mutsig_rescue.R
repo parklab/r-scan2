@@ -12,7 +12,11 @@ get.high.quality.mutations <- function(gatk, muttype=c('snv', 'indel')) {
 # pass normally if target.fdr=0.5 (i.e., 50% false discovery rate, which
 # is very high; recommended target.fdr is 0.01 (1%)).
 reduce.table <- function(gatk, target.fdr) {
-    compute.filter.reasons(gatk[static.filter & lysis.fdr <= 0.5 & mda.fdr <= 0.5], target.fdr=target.fdr, simple.filters=FALSE)
+    # Filtering with these criteria produces a very small table, so the
+    # copy created here is no big deal.
+    ret <- gatk[static.filter & lysis.fdr <= 0.5 & mda.fdr <= 0.5]
+    ret[, filter.reasons := compute.filter.reasons(ret, target.fdr=target.fdr, simple.filters=FALSE)]
+    ret
 }
 
 
@@ -22,8 +26,9 @@ reduce.table <- function(gatk, target.fdr) {
 # because the various test columns already incoporate differences in
 # calling parameters.
 #
-# simple.filters - 100-fold faster than full filters. Notably, simple.filters
-#   selects just one arbitrary filter when many might apply.
+# simple.filters - 100-fold faster than full filters. Notably, simple.filters=TRUE
+#   selects just one arbitrary filter when many might apply; simple.filters=FALSED
+#   produces a ';'-separated list of all applicable filters.
 compute.filter.reasons <- function(gatk, target.fdr, simple.filters=FALSE, return.filter.descriptions=FALSE) {
     filter.descriptions <- c(
         PASS='VAF-based passing call (i.e., no mutation signature information was used)',
@@ -103,7 +108,7 @@ mutsig.rescue.one <- function(object, artifact.sig, true.sig,
 
     # All work in this function will be done on a copy of the object with a much, much
     # smaller GATK table.  Results will be joined back at the end.
-    tmpgatk <- copy(reduce.table(object@gatk, target.fdr=target.fdr))
+    tmpgatk <- reduce.table(data(object), target.fdr=target.fdr)
 
     sigtype <- if (mt == 'snv') sbs96 else id83
     mutsigs <- sigtype(tmpgatk[muttype == mt & filter.reasons == 'pre.amplification.artifact']$mutsig)
@@ -127,8 +132,23 @@ mutsig.rescue.one <- function(object, artifact.sig, true.sig,
 
     # Now join the results back to the main (much larger) table.
     # This modifies object by reference, no need to return it.
-    object@gatk[tmpgatk, on=.(chr, pos, refnt, altnt),
-        c('rweight', 'rescue.fdr', 'rescue') := list(i.rweight, i.rescue.fdr, i.rescue)]
+    #
+    # Handle the class situation manually. The class=SCAN2 scenario updates
+    # a massive ~2.5-3.0 Gb data.table, which we must be careful not to copy.
+    if (is(object, 'SCAN2')) {
+        # Apply blank entries to the whole table since only the part joining
+        # to `tmpgatk` will be updated below.
+        object@gatk[ , c('rweight' 'rescue.fdr', 'rescue') := list(NA, NA, FALSE)]
+        object@gatk[tmpgatk, on=.(chr, pos, refnt, altnt),
+            c('rweight', 'rescue.fdr', 'rescue') := list(i.rweight, i.rescue.fdr, i.rescue)]
+    } else if (is(object, 'summary.SCAN2')) {
+        gs <- summarize.gatk(object, quiet=FALSE)
+        object@gatk.info <- gs$gatk.info
+        object@gatk.calls <- gs$gatk.calls
+        object@gatk <- gs$filtered.gatk
+    } else {
+        stop("`object' must be class=SCAN2 or summary.SCAN2")
+    }
 
 
     # Compute the signature homogeneity test w.r.t. the true signature provided
@@ -183,7 +203,7 @@ get.sig.score <- function(mutsigs, true.sig, artifact.sig, eps=0.001) {
 
 sig.homogeneity.test <- function(object, true.sig, muttype=c('snv', 'indel')) {
     muttype <- match.arg(muttype)
-    true.muts <- get.high.quality.mutations(object@gatk, muttype=muttype)
+    true.muts <- get.high.quality.mutations(data(object), muttype=muttype)
     if (muttype == 'snv')
         true.muts <- table(sbs96(true.muts$mutsig))
     if (muttype == 'indel')
@@ -194,7 +214,7 @@ sig.homogeneity.test <- function(object, true.sig, muttype=c('snv', 'indel')) {
 
 
 sig.homogeneity.test.vs.sig <- function(true.muts, true.sig, n.samples=1e5, seed=10) {
-    set.seed(10)   # for reproducibility
+    set.seed(seed)   # for reproducibility
     logp.cell <- dmultinom(true.muts, size=sum(true.muts), prob=true.sig, log=TRUE)
     randoms <- stats::rmultinom(n.samples, sum(true.muts), prob=true.sig)
     logps <- apply(randoms, 2, dmultinom, size=sum(true.muts), prob=true.sig, log=TRUE)
