@@ -613,8 +613,6 @@ summarize.spatial.sensitivity <- function(object, quiet=FALSE) {
         ret$burden <- ss$burden
         ret$model.coefs <- ss$models   # This *should* be OK since the model is replaced by coef()
 
-        #ret$stratified.tabs <- mapply(c('snv', 'indel'), 
-
         # Compare the predicted sensitivity and measured sensitivity (at hSNPs)
         # for tiles held out of model fitting.
         ret$model.assessment <- setNames(mapply(function(muttype, alleletype)
