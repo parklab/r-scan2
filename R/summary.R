@@ -65,6 +65,10 @@ make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
     object@binned.counts$sc <- data.table::copy(object@binned.counts$sc)
     object@binned.counts$bulk <- data.table::copy(object@binned.counts$bulk)
 
+    # Must be run *before* code below, particularly summarize.call.mutations.and.mutburden,
+    # which can change the @gatk table if preserve.object=FALSE.
+    gatk.summary <- summarize.gatk(object, quiet=quiet)
+
     summary.object <- new("summary.SCAN2",
         package.version=object@package.version,
         pipeline.version=object@pipeline.version,
@@ -80,9 +84,9 @@ make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
         mapd=summarize.mapd(object, quiet=quiet),
         binned.counts=summarize.binned.counts(object, quiet=quiet),
         depth.profile=summarize.depth.profile(object, quiet=quiet),
-        gatk.info=NULL,
-        gatk.calls=NULL,
-        gatk=NULL,
+        gatk.info=gatk.summary$gatk.info,
+        gatk.calls=gatk.summary$gatk.calls,
+        gatk=gatk.summary$filtered.gatk,
         training.data=summarize.training.data(object, quiet=quiet),
         ab.fits=summarize.ab.fits(object, quiet=quiet),
         ab.distn=summarize.ab.distn(object, quiet=quiet),
@@ -98,17 +102,6 @@ make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
         call.mutations.and.mutburden=summarize.call.mutations.and.mutburden(object, preserve.object=preserve.object, quiet=quiet),
         mutsig.rescue=object@mutsig.rescue
     )
-
-    gatk.summary <- summarize.gatk(object, quiet=quiet)
-
-    summary.object@gatk.info <- gatk.summary$gatk.info    # counts of various things
-    # an uncompressed, tiny table of only called mutations for fast access
-    # must be kept up-to-date by, e.g., rescue.
-    summary.object@gatk.calls <- gatk.summary$gatk.calls
-    # a compressed subset of the full gatk table
-    summary.object@gatk <- gatk.summary$filtered.gatk
-
-    summary.object
 }
 
 setValidity("summary.SCAN2", function(object) {
