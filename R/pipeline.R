@@ -587,8 +587,8 @@ make.permuted.mutations <- function(sc.sample, muts, callable.bed, genome.string
 #     normally not be specified by the user--these are calculated from the high confidence
 #     mutation calls in the objects and add.muts.
 mutsig.rescue <- function(object.paths, add.muts, rescue.target.fdr=0.01,
-    artifact.sigs=list(snv=data(snv.artifact.signature.v3),
-                       indel=data(indel.artifact.signature.v1)),
+    artifact.sigs=list(snv=utils::data(snv.artifact.signature.v3),
+                       indel=utils::data(indel.artifact.signature.v1)),
     true.sig=NULL, quiet=FALSE, report.mem=TRUE)
 {
     # Ensure that the user did set names for outputs
