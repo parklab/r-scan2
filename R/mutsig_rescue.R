@@ -138,7 +138,7 @@ mutsig.rescue.one <- function(object, artifact.sig, true.sig,
     if (is(object, 'SCAN2')) {
         # Apply blank entries to the whole table since only the part joining
         # to `tmpgatk` will be updated below.
-        object@gatk[ , c('rweight', 'rescue.fdr', 'rescue') := list(NA, NA, FALSE)]
+        object@gatk[ , c('rweight', 'rescue.fdr', 'rescue') := list(as.numeric(NA), as.numeric(NA), as.logical(FALSE))]
         object@gatk[tmpgatk, on=.(chr, pos, refnt, altnt),
             c('rweight', 'rescue.fdr', 'rescue') := list(i.rweight, i.rescue.fdr, i.rescue)]
     } else if (is(object, 'summary.SCAN2')) {

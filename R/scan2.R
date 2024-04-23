@@ -875,7 +875,7 @@ setMethod("call.mutations", "SCAN2", function(object, target.fdr=0.01, quiet=FAL
 
     # Rescue hasn't happened (or if it has, reset it), so introduce the rescue column
     # for consistency.
-    object@gatk[, c('rweight', 'rescue.fdr', 'rescue') := list(NA, NA, FALSE)]
+    object@gatk[, c('rweight', 'rescue.fdr', 'rescue') := list(as.numeric(NA), as.numeric(NA), as.logical(FALSE))]
 
 
     # NAs are especially present in legacy output where not all sites
