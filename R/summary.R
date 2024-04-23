@@ -17,12 +17,12 @@ setClass("summary.SCAN2", slots=c(
     bulk='character',
     sex='character',
     amplification='character',
-    raw.gatk='null.or.list',
     mapd='null.or.list',
     binned.counts='null.or.list',
     depth.profile='null.or.list',
-    gatk='null.or.raw.or.dt',
-    gatk.calls='null.or.dt',
+    gatk.info='null.or.list',        # list of stats
+    gatk.calls='null.or.dt',         # tiny uncompressed @gatk subset
+    gatk='null.or.raw.or.dt',        # large compressed @gatk subset
     training.data='null.or.list',
     ab.fits='null.or.list',
     ab.distn='null.or.list',
@@ -77,10 +77,10 @@ make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
         bulk=object@bulk,
         sex=object@sex,
         amplification=object@amplification,
-        raw.gatk=NULL,
         mapd=summarize.mapd(object, quiet=quiet),
         binned.counts=summarize.binned.counts(object, quiet=quiet),
         depth.profile=summarize.depth.profile(object, quiet=quiet),
+        gatk.info=NULL,
         gatk.calls=NULL,
         gatk=NULL,
         training.data=summarize.training.data(object, quiet=quiet),
