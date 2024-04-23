@@ -245,6 +245,20 @@ decompress.spatial.sens <- function(comptab, unq=unquantize.raw2) {
 }
 
 
+compress.spatial.training <- function(tab) {
+    list(chrom.rle=rle(tab$chr),
+        # we could bitpack muttype and pass, but the vast majority of memory
+        # is already used by (pos, refnt, altnt, af, dp).
+        dt1=compress.dt(tab[,.(pos, refnt, altnt, muttype, af=quantize.raw1(af), dp, training.pass)])
+    )
+}
+decompress.spatial.training <- function(comptab) {
+    dt1 <- decompress.dt(comptab$dt1)
+    dt1[, af := unquantize.raw1(af)]
+    cbind(chr=inverse.rle(comptab$chrom.rle), dt1)
+}
+
+
 # approximate the vector `x` by rounding its values to `n.digits` decimal
 # places and returning a tabulation of rounded values.
 #
@@ -616,6 +630,12 @@ summarize.spatial.sensitivity <- function(object, quiet=FALSE) {
         # the first covariate is the intercept. Remove it.
         ret$covariate.assessment <- data.table::rbindlist(lapply(rownames(ret$model.coefs[[1]])[-1],
                 function(cov.name) assess.covariate(cov=cov.name, object=object)))
+
+        # Compressed table of passing training sites with the minimal set of covariates
+        # necessary for building location-specific sensitivity adjustment tracks.
+        ret$spatial.training <- compress.spatial.training(
+            object@gatk[training.site == TRUE, .(chr, pos, refnt, altnt, muttype, af, dp, training.pass)]
+        )
 
         # Keep a compressed 1kb resolution spatial sensitivity profile (~140MB raw, ~70M compressed)
         # N.B. it would save ~20M (compressed) to delete the chr,start,end columns and require them
