@@ -396,33 +396,36 @@ plot.gp.confidence <- function(pos, gp.mu, gp.sd, df, sd.mult=2,
 # two sites.
 ###############################################################################
 
-setGeneric("plot.abmodel.covariance", function(object) standardGeneric("plot.abmodel.covariance"))
-setMethod("plot.abmodel.covariance", "SCAN2", function(object) {
-    # Use finer binning than the standard call
-    neighbor.approx <- approx.abmodel.covariance(object, bin.breaks=c(1, 10^seq(1,5,length.out=50)))
-    helper.plot.abmodel.covariance(object, neighbor.approx)
+setGeneric("plot.abmodel.cov", function(x) standardGeneric("plot.abmodel.cov"))
+setMethod("plot.abmodel.cov", "SCAN2", function(x) {
+    helper.plot.abmodel.cov(abmodel.cov(x, type='all'))
 })
 
-setMethod("plot.abmodel.covariance", "summary.SCAN2", function(object) {
-    helper.plot.abmodel.covariance(object, object@training.data$neighbor.cov.approx.full)
+setMethod("plot.abmodel.cov", "summary.SCAN2", function(x) {
+    helper.plot.abmodel.cov(abmodel.cov(x, type='all'))
 })
 
-helper.plot.abmodel.covariance <- function(object, approx) {
-    plot.mle.fit <- function(object, ...) {
-        ps <- colMeans(ab.fits(object))
-        a=ps['a']; b=ps['b']; c=ps['c']; d=ps['d']
-        curve(K.func(x, y=0, a=a, b=b, c=c, d=d)/(exp(a)+exp(c)), ...)
+setMethod("plot.abmodel.cov", "list", function(x) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 xs only')
     }
 
-    # [-1] - use right-hand side of interval for plotting
-    plot(approx[,.(max.d, corrected.cor)],
+    # Only allow fit plotting since other lines would be too crowded
+    m <- abmodel.cov(x, type='fit')
+    matplot(m[,1], m[,-1],
+        log='x', type='l', lwd=2, lty='solid', ylim=0:1,
+        xlab='Distance between hSNPs (log10)', ylab='Correlation between hSNP VAFs')
+})
+
+helper.plot.abmodel.cov <- function(approx) {
+    plot(approx[,c('dist', 'neighbor.corrected')],
         log='x', type='b', pch=16, ylim=0:1,
         xlab='Distance between hSNPs (log10)', ylab='Correlation between hSNP VAFs')
-    lines(approx[,.(max.d, observed.cor)],
-        type='b', pch=1, lty='dotted')
-    plot.mle.fit(object, add=TRUE, col=2, lwd=2)
+    lines(approx[,c('dist', 'neighbor')], type='b', pch=1, lty='dotted')
+    lines(approx[,c('dist', 'fit')], col=2, lwd=2)
     legend('topright', pch=c(16,1,NA), lwd=c(1,1,2), col=c(1,1,2), lty=c('solid','dotted','solid'),
-        legend=c('Adjacent hSNP approx. (corrected)', 'Adjacent hSNP approx. (observed)', 'MLE fit (avg. over chroms)'))
+        legend=c('Neighbor hSNP approx (corrected)', 'Neighbor hSNP approx', 'MLE fit (avg. over chroms)'))
     abline(v=c(150,300), lty='dotted')
 }
 
@@ -434,22 +437,23 @@ helper.plot.abmodel.covariance <- function(object, approx) {
 
 setGeneric("plot.depth.profile", function(object, maxdp, keep.zero=FALSE, quantile=0.99)
     standardGeneric("plot.depth.profile"))
-
 setMethod("plot.depth.profile", "SCAN2", function(object, maxdp, keep.zero=FALSE, quantile=0.99) {
     d <- object@depth.profile$dptab
     if (missing(maxdp))
         maxdp <- object@depth.profile$clamp.dp
-    helper.plot.depth.profile(d=d, maxdp=maxdp, keep.zero=keep.zero, quantile=quantile)
+    helper.plot.depth.profile(d=d, sex.ds=object@depth.profile$dptabs.sex, maxdp=maxdp, keep.zero=keep.zero, quantile=quantile)
 })
 
 setMethod("plot.depth.profile", "summary.SCAN2", function(object, maxdp, keep.zero=FALSE, quantile=0.99) {
     d <- decompress.dt(object@depth.profile$dptab)
     if (missing(maxdp))
         maxdp <- object@depth.profile$clamp.dp
-    helper.plot.depth.profile(d=d, maxdp=maxdp, keep.zero=keep.zero, quantile=quantile)
+    sex.ds <- setNames(lapply(object@depth.profile$dptabs.sex, decompress.dt),
+        names(object@depth.profile$dptabs.sex))
+    helper.plot.depth.profile(d=d, sex.ds=sex.ds, maxdp=maxdp, keep.zero=keep.zero, quantile=quantile)
 })
 
-helper.plot.depth.profile <- function(d, maxdp, keep.zero=FALSE, quantile=0.99) {
+helper.plot.depth.profile <- function(d, sex.ds, maxdp, keep.zero=FALSE, quantile=0.99) {
     require(viridisLite)
     # row and column 1 correspond to 0 depth. these usually completely
     # drown out the rest of the depth signal.
@@ -457,6 +461,7 @@ helper.plot.depth.profile <- function(d, maxdp, keep.zero=FALSE, quantile=0.99) 
     y=0:maxdp
     if (!keep.zero) {
         d <- d[-1,][,-1]
+        sex.ds <- lapply(sex.ds, function(d) d[-1,][,-1])
         x <- x[-1]
         y <- y[-1]
     }
@@ -469,10 +474,23 @@ helper.plot.depth.profile <- function(d, maxdp, keep.zero=FALSE, quantile=0.99) 
     if (length(ymax) == 0)  # if not found, take the whole thing
         ymax <- maxdp
 
+    if (length(sex.ds) > 0)
+        layout(t(1:(1+length(sex.ds))))
+
     image(x=x, y=y, d, col=viridisLite::viridis(100),
+        main='Autosomes',
         xlim=c(0,xmax), ylim=c(0,ymax),
-        xlab=paste(names(dimnames(d))[1], ' (single cell) depth'),
-        ylab=paste(names(dimnames(d))[2], ' (buk) depth'))
+        xlab=paste(names(dimnames(d))[1], '(single cell) depth'),
+        ylab=paste(names(dimnames(d))[2], '(buk) depth'))
+
+    # use the same ylims as the autosomes to preserve comparison
+    for (i in seq_along(sex.ds)) {
+        image(x=x, y=y, sex.ds[[i]], col=viridisLite::viridis(100),
+            main=paste0("Sex chrom. ", names(sex.ds)[i]),
+            xlim=c(0,xmax), ylim=c(0,ymax),
+            xlab=paste(names(dimnames(d))[1], '(single cell) depth'),
+            ylab=paste(names(dimnames(d))[2], '(buk) depth'))
+    }
 }
 
 
@@ -687,42 +705,42 @@ helper.plot.mutburden <- function(tab) {
 # expect.
 ###############################################################################
 
-setGeneric('plot.binned.counts', function(x, type=c('count', 'ratio', 'ratio.gcnorm', 'cnv')) standardGeneric('plot.binned.counts'))
+setGeneric('plot.binned.counts', function(x, type=c('count', 'ratio', 'ratio.gcnorm', 'cnv'), max.nrow=7) standardGeneric('plot.binned.counts'))
 setMethod('plot.binned.counts', 'SCAN2',
-    function(x, type=c('cnv', 'count', 'ratio', 'ratio.gcnorm'))
+    function(x, type=c('cnv', 'count', 'ratio', 'ratio.gcnorm'), max.nrow=7)
 {
     bc <- summarize.binned.counts(x, quiet=FALSE)$sc
-    helper.plot.binned.counts(bc, sample.name=x@single.cell, type=type)
+    helper.plot.binned.counts(bc, sample.name=x@single.cell, type=type, nrow=max.nrow)
 })
 
 setMethod('plot.binned.counts', 'summary.SCAN2',
-    function(x, type=c('cnv', 'count', 'ratio', 'ratio.gcnorm'))
+    function(x, type=c('cnv', 'count', 'ratio', 'ratio.gcnorm'), max.nrow=7)
 {
-    helper.plot.binned.counts(x@binned.counts$sc, sample.name=x@single.cell, type=type)
+    helper.plot.binned.counts(x@binned.counts$sc, sample.name=x@single.cell, type=type, nrow=max.nrow)
 })
 
 setMethod('plot.binned.counts', 'list',
-    function(x, type=c('cnv', 'count', 'ratio', 'ratio.gcnorm'))
+    function(x, type=c('cnv', 'count', 'ratio', 'ratio.gcnorm'), max.nrow=7)
 {
     classes <- sapply(x, class)
     if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
         stop('x must be a list of SCAN2 or summary.SCAN2 xs only')
     }
 
-    max.nrow <- min(length(x), 7)
-    layout(matrix(1:(ceiling(length(x)/max.nrow)*max.nrow), nrow=max.nrow))
+    nrow <- min(length(x), max.nrow)
+    layout(matrix(1:(ceiling(length(x)/nrow)*nrow), nrow=nrow))
     for (object in x)
-        helper.plot.binned.counts(object@binned.counts$sc, sample.name=object@single.cell, type=type)
+        helper.plot.binned.counts(object@binned.counts$sc, sample.name=object@single.cell, type=type, nrow=nrow)
 })
 
-helper.plot.binned.counts <- function(binned.counts, sample.name, ylim, ylab, type=c('cnv', 'count', 'ratio', 'ratio.gcnorm'), ...) {
+helper.plot.binned.counts <- function(binned.counts, sample.name, ylim, ylab, nrow=1, type=c('cnv', 'count', 'ratio', 'ratio.gcnorm'), ...) {
     chrs.in.order <- binned.counts[!duplicated(chr)]$chr
     type <- match.arg(type)
 
     colmap <- setNames(head(rep(c('black','#666666'), length(chrs.in.order)), length(chrs.in.order)),
         chrs.in.order)
 
-    # cns: 2 = normal
+    # cns: 2 = diploid
     cns <- rep(NA, nrow(binned.counts))
     if ('garvin.seg.integer' %in% names(binned.counts)) {
         cns <- binned.counts$garvin.seg.integer
@@ -748,25 +766,28 @@ helper.plot.binned.counts <- function(binned.counts, sample.name, ylim, ylab, ty
         }
     }
 
-    par(mar=c(1/2,4,1/2,1))
+    oldpar <- par(mar=c(1,4,1/2,1))
     restricted.points <- pmin(pmax(points, ylim[1]), ylim[2])
     plot(restricted.points,
         col=colmap[binned.counts$chr],
         pch=ifelse(points == restricted.points, 16, 1),
         cex=1/2,
         xaxt='n', xaxs='i',
+        ylim=ylim,
         ylab=ylab, ...)
     abline(v=which(c(binned.counts$chr, NA) != c(NA, binned.counts$chr)), col='#AAAAAA')
 
     axis.posns <- c(0, cumsum(binned.counts[,.(pos=nrow(.SD)),by=chr]$pos))
     # adj=(0, 0.3) - nudge up slightly
-    text(y=ylim[1], x=axis.posns[-length(axis.posns)] + diff(axis.posns)/2, labels=chrs.in.order, adj=c(0, 0.3)) #, pos=3)
+    #text(y=ylim[1], x=axis.posns[-length(axis.posns)] + diff(axis.posns)/2, labels=chrs.in.order, adj=c(0.5, 1.0)) #, pos=3)
+    axis(side=1, line=-1, tick=FALSE, at=axis.posns[-length(axis.posns)] + diff(axis.posns)/2, labels=chrs.in.order)
 
     if (type != 'count') {
         lines(cns, lwd=2, col=2)
     }
 
     legend('topleft', bty='n', legend=sample.name)
+    par(oldpar)
 }
 
 
@@ -878,4 +899,46 @@ helper.plot.mapd <- function(mapds, type=c('curve', 'canonical')) {
         barplot(mapds, las=3, ylab='MAPD', xlab='', cex.names=3/4)
         par(mar=oldpar)
     }
+}
+
+
+###############################################################################
+# UpSet plot of shared mutation counts
+###############################################################################
+
+setGeneric('plot.shared', function(x, muttype=c('both', 'snv', 'indel'), method=c('calls', 'classifier')) standardGeneric('plot.shared'))
+
+# "shared" does not make sense applied to individual SCAN2 or summary objects
+setMethod('plot.shared', 'list', function(x, muttype=c('both', 'snv', 'indel'), method=c('calls', 'classifier')) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+
+    helper.plot.shared(shared(x, muttype=muttype, method=method))
+})
+
+helper.plot.shared <- function(tab, max.intersects=100) {
+    if (nrow(tab) == 0) {
+        plot(0, pch=NA, xaxt='n', yaxt='n', bty='n', xlab='', ylab='')
+        legend('center', legend='No shared mutations found')
+    } else {
+        # Shared tables can have >1 row per shared site
+        samples <- tab[, .(samples=samples[1]), by=.(chr, pos, refnt, altnt)]$samples
+        x <- sort(table(samples), decreasing=T)
+        if (length(x) > max.intersects)
+            warning(paste("truncating to the", max.intersects, "largest intersections"))
+
+        x <- head(x, max.intersects)
+        xsets <- unique(unlist(strsplit(names(x), '&')))
+        # set the ratio of the top barplot to the bottom grid.  start with
+        # a 60%/40% split, scaling up to a 30%/70% split when 30 or more
+        # intersections exist
+        mb.size <- 0.4 + 0.3*min(30, length(xsets))/30
+        p <- UpSetR::upset(UpSetR::fromExpression(x), sets=xsets, nintersects=length(x),
+            keep.order=TRUE, mb.ratio=c(1-mb.size, mb.size),
+            text.scale=c(1,1,1,1,1,1.5))
+        print(p)
+    }
+    invisible(tab)
 }
