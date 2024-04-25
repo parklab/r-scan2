@@ -121,7 +121,6 @@ genome.string.to.chroms <- function(genome,
         stop("unsupported genome string")
     }
 
-    sqi <- genome.string.to.seqinfo.object(genome=genome)
     # seqlevelsStyle()[1] - 'hs37d5' returns both NCBI and Ensembl as styles, pick the first one
     GenomeInfoDb::extractSeqlevelsByGroup(species=species, style=seqlevelsStyle(sqi)[1], group=group)
 }
