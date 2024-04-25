@@ -1,12 +1,99 @@
-# Return the per-chromosome AB model parameter fits
-setGeneric("ab.fits", function(object) standardGeneric("ab.fits"))
-setMethod("ab.fits", "SCAN2", function(object) {
-    object@ab.fits
+setGeneric("abmodel.cov", function(x, type=c('fit', 'neighbor', 'neighbor.corrected', 'all')) standardGeneric("abmodel.cov"))
+setMethod("abmodel.cov", "SCAN2", function(x, type=c('fit', 'neighbor', 'neighbor.corrected', 'all')) {
+    helper.abmodel.cov(
+        single.cell=x@single.cell,
+        ab.params=ab.fits(x, type='mean'),
+        approx=approx.abmodel.covariance(x, bin.breaks=c(1, 10^seq(1,5,length.out=50))),
+        type=type,
+        sex.chroms=get.sex.chroms(x))
 })
 
-setMethod("ab.fits", "summary.SCAN2", function(object) {
-    object@ab.fits$params
+setMethod("abmodel.cov", "summary.SCAN2", function(x, type=c('fit', 'neighbor', 'neighbor.corrected', 'all')) {
+    helper.abmodel.cov(
+        single.cell=x@single.cell,
+        ab.params=ab.fits(x, type='mean'),
+        approx=x@training.data$neighbor.cov.approx.full,
+        type=type,
+        sex.chroms=get.sex.chroms(x))
 })
+
+setMethod("abmodel.cov", "list", function(x, type=c('fit', 'neighbor', 'neighbor.corrected')) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    
+    ret <- lapply(x, abmodel.cov)
+    ret <- cbind(ret[[1]][,'dist'], do.call(cbind, lapply(ret, function(abcov) abcov[,2,drop=FALSE])))
+    colnames(ret)[1] <- 'dist'
+    ret
+})
+
+
+helper.abmodel.cov <- function(ab.params, approx, single.cell, at=10^seq(1,5,length.out=50), type=c('fit', 'neighbor', 'neighbor.corrected', 'all'), sex.chroms=c()) {
+    type <- match.arg(type)
+    n <- as.data.frame(approx[!(chr %in% sex.chroms), mean(observed.cor, na.rm=TRUE), by=max.d])
+    nc <- as.data.frame(approx[!(chr %in% sex.chroms), mean(corrected.cor, na.rm=TRUE), by=max.d])
+    f <- data.frame(d=at, cov=K.func(x=at, y=0, a=ab.params$a, b=ab.params$b, c=ab.params$c, d=ab.params$d)/(exp(ab.params$a)+exp(ab.params$c)))
+    if (type == 'neighbor') {
+        ret <- n
+    } else if (type == 'neighbor.corrected') {
+        ret <- nc
+    } else if (type == 'fit') {
+        ret <- f
+    } else if (type == 'all') {
+        ret <- cbind(f, n[,2], nc[,2])
+        colnames(ret) <- c('dist', 'fit', 'neighbor', 'neighbor.corrected')
+    }
+    if (type != 'all')
+        setNames(ret, c('dist', single.cell))
+    else
+        ret
+}
+
+
+# Return AB model parameter fits
+# IMPORTANT: when type=mean, sex chromosomes are excluded
+setGeneric("ab.fits", function(x, type=c('chromosome', 'mean'), keep.cols=FALSE) standardGeneric("ab.fits"))
+setMethod("ab.fits", "SCAN2", function(x, type=c('chromosome', 'mean'), keep.cols=FALSE) {
+    helper.ab.fits(ab.params=x@ab.fits, single.cell=x@single.cell,
+        sex.chroms=get.sex.chroms(x), type=type, keep.cols=keep.cols)
+})
+
+setMethod("ab.fits", "summary.SCAN2", function(x, type=c('chromosome', 'mean'), keep.cols=FALSE) {
+    helper.ab.fits(ab.params=x@ab.fits$params, single.cell=x@single.cell,
+        sex.chroms=get.sex.chroms(x), type=type, keep.cols=keep.cols)
+})
+
+# NOTE: for the list method, keep.cols=TRUE by default
+setMethod("ab.fits", "list", function(x, type=c('chromosome', 'mean'), keep.cols=TRUE) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    
+    ret <- rbindlist(lapply(x, ab.fits, type=type, keep.cols=keep.cols))
+    ret
+})
+
+helper.ab.fits <- function(ab.params, single.cell, type=c('chromosome', 'mean'), sex.chroms=c(), keep.cols=FALSE) {
+    type <- match.arg(type)
+    if (type == 'mean') {
+        ret <- t(colMeans(ab.params[!(rownames(ab.params) %in% sex.chroms),]))
+    } else if (type == 'chromosome') {
+        ret <- data.frame(chromosome=rownames(ab.params), ab.params[,c('a', 'b', 'c', 'd')])
+    }
+    ret <- data.frame(sample=single.cell, ret)
+    # Get rid of the sample, chrom columns. 'chrom' col only exists for type=chromosome
+    if (!keep.cols) {
+        if (type == 'mean')
+            ret <- ret[,-1]
+        else if (type == 'chromosome')
+            ret <- ret[,-(1:2)]
+    }
+    ret
+}
+
 
 
 # Return the raw data table with all metrics used to call mutations.
@@ -18,6 +105,7 @@ setMethod("data", "SCAN2", function(object) {
 setMethod("data", "summary.SCAN2", function(object) {
     decompress.dt(object@gatk)
 })
+
 
 
 # Return all passing mutation calls. Currently these only return VAF-based calls.
@@ -56,6 +144,66 @@ setMethod("passing", "list", function(x, muttype=c('both', 'snv', 'indel')) {
         tab[[x@single.cell]] <- NULL  
         cbind(sample=x@single.cell, tab)
     }))
+})
+
+
+
+# Several methods for finding shared mutations (which is different from
+# clonal mutation detection, which we define as being present in bulk).
+#
+# methods:
+#   calls - return a data.table of somatic mutations that are PASSed by
+#           SCAN2 in more than one cell.  Can detect n-way sharing.
+#   classifier - a simple classifier scheme based on Ganz et al 2024 to
+#           find shared mutations that are PASSed in one cell but not
+#           in another.  Can only detect 2-way sharing.  Increased
+#           sensitivity compared to method=calls since it does not require
+#           a PASSing status in both cells.
+#
+# In all cases, returns a data.table with various amounts of information.
+# Among the information guaranteed to be present is:
+#   - chr, pos, refnt, altnt, muttype, mutsig, (single cell) af, dp
+#   - n.way - the number of cell sharing the mutation
+#   - samples - a "&"-separated list of sample names sharing the mutation
+setGeneric("shared", function(x, muttype=c('both', 'snv', 'indel'), method=c('calls', 'classifier')) standardGeneric("shared"))
+setMethod("shared", 'list', function(x, muttype=c('both', 'snv', 'indel'), method=c('calls', 'classifier')) {
+    muttype <- match.arg(muttype)
+    method <- match.arg(method)
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 xs only')
+    }
+
+    if (method == 'calls') {
+        calls <- passing(x, muttype=muttype)
+        ret <- calls[, .(sample, muttype, mutsig, af, dp, n.way=length(sample), samples=paste(sample, collapse='&')), by=.(chr, pos, refnt, altnt)][n.way > 1]
+    } else if (method == 'classifier') {
+        allowed.muttypes <- muttype
+        if (muttype == 'both')
+            allowed.muttypes <- c("snv", 'indel')
+
+        # Uncompress everything once and take a small subset of the columns.
+        # For summary.SCAN2 objects, typically ~20 Mb of RAM per object, easily scalable to 100s of objects.
+        # For SCAN2 objects, typically ~500 Mb of RAM per object, so limit analyses to <25 objects.
+        # Note that the inner loop creates approx. 2 data() copies at a time, so ~1 Gb of temp
+        # memory usage per comparison.
+        datas <- lapply(x, function(object) {
+            ret <- data(object)[muttype %in% allowed.muttypes, .(sample=object@single.cell, chr, pos, refnt, altnt, muttype, mutsig, af, dp, balt, bulk.dp, scalt, resampled.training.site, pass, rescue, training.pass)]
+            # index/sort tables once so they don't have to be rekeyed by merge() O(N^2) times
+            # shared.classifier() requires that setkey() has been called
+            setkey(ret, chr, pos, refnt, altnt)
+            ret
+        })
+        ret <- rbindlist(lapply(seq_along(x), function(i) {
+            rbindlist(lapply(i+seq_along(x[-(1:i)]), function(j) {
+                ret <- shared.classifier(datas[[i]], datas[[j]])
+                ret[classification == 'shared'][, c('n.way', 'samples') :=
+                    list(2, paste(sample.x, sample.y, sep='&'))]
+            }))
+        }))
+    } 
+
+    ret
 })
 
 
@@ -226,4 +374,41 @@ setMethod("mapd", "list", function(x, type=c('curve', 'canonical')) {
     } else {
         unlist(mapds)
     }
+})
+
+
+
+
+setGeneric("binned.counts", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count')) standardGeneric("binned.counts"))
+setMethod("binned.counts", "SCAN2", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count')) {
+    helper.binned.counts(tab=x@binned.counts$sc, type=type, single.cell=x@single.cell)
+})
+
+setMethod("binned.counts", "summary.SCAN2", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count')) {
+    helper.binned.counts(tab=x@binned.counts$sc, type=type, single.cell=x@single.cell)
+})
+
+helper.binned.counts <- function(tab, single.cell, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count')) {
+    type <- match.arg(type)
+    colname <- type
+    if (type == 'cnv')
+        colname <- 'garvin.ratio.gcnorm.ploidy'
+    ret <- cbind(pos=as.integer((tab$start + tab$end)/2), tab[[colname]])
+    colnames(ret) <- c('pos', single.cell)
+    rownames(ret) <- tab$chr
+    ret
+}
+
+setMethod("binned.counts", "list", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count')) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    
+    ret <- lapply(x, binned.counts, type=type)
+    rns <- rownames(ret[[1]])
+    ret <- cbind(ret[[1]][,'pos'], do.call(cbind, lapply(ret, function(bc) bc[,2,drop=FALSE])))
+    colnames(ret)[1] <- 'pos'
+    rownames(ret) <- rns
+    ret
 })
