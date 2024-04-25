@@ -153,7 +153,6 @@ approx.abmodel.covariance <- function(object, bin.breaks=10^(0:5)) {
     # data.table complains about recursive indexing if i try to do this in a := statement
     corrected.cor <- sapply(1:nrow(ret), function(i) inverse.fns.by.depth[[as.character(ret$mean.dp[i])]](ret$observed.cor[i]))
     ret[, corrected.cor := corrected.cor]
-    #ret[, max.d := bin.breaks[-1]]
 
     ret
 }
