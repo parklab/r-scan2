@@ -379,36 +379,86 @@ setMethod("mapd", "list", function(x, type=c('curve', 'canonical')) {
 
 
 
-setGeneric("binned.counts", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count')) standardGeneric("binned.counts"))
-setMethod("binned.counts", "SCAN2", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count')) {
-    helper.binned.counts(tab=x@binned.counts$sc, type=type, single.cell=x@single.cell)
+setGeneric("gc.bias", function(x) standardGeneric("gc.bias"))
+setMethod("gc.bias", "SCAN2", function(x) {
+    bc <- summarize.binned.counts(x)$sc
+    helper.gc.bias(bc, single.cell=x@single.cell)
 })
 
-setMethod("binned.counts", "summary.SCAN2", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count')) {
-    helper.binned.counts(tab=x@binned.counts$sc, type=type, single.cell=x@single.cell)
+setMethod("gc.bias", "summary.SCAN2", function(x) {
+    helper.gc.bias(x@binned.counts$sc, single.cell=x@single.cell)
 })
 
-helper.binned.counts <- function(tab, single.cell, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count')) {
-    type <- match.arg(type)
-    colname <- type
-    if (type == 'cnv')
-        colname <- 'garvin.ratio.gcnorm.ploidy'
-    ret <- cbind(pos=as.integer((tab$start + tab$end)/2), tab[[colname]])
-    colnames(ret) <- c('pos', single.cell)
-    rownames(ret) <- tab$chr
+# This function just inverts whatever gc.correct() did to derive
+# ratio.gcnorm from ratio.
+helper.gc.bias <- function(bc, single.cell) {
+    # all values of 'fit' for the same 'gc' should be identical
+    ret <- bc[, .(GC, fit=log2(ratio)-log2(ratio.gcnorm))]
+    # round the GC values to the 0.001 place and take the average correction
+    # factor. otherwise, there is GC entry for every bin in binned.counts (bc)
+    # XXX: nothing from here-down can be changed without changing binned.counts(along='gc')!
+    ret <- as.matrix(ret[,.(fit=mean(fit)),by=.(gc=round(GC,3))][order(gc)])
+    colnames(ret) <- c('gc', single.cell)
+    # There are sometimes outlier GC bins. At this level of rounding, almost
+    # every GC bin is 0.001 from the next bin, and always < 0.005 for hg19.
+    # Use 10x that (=0.05) as a cutoff to remove outliers.
+    ret <- ret[c(diff(ret[,'gc']), 0) < 0.05,]
     ret
 }
 
-setMethod("binned.counts", "list", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count')) {
+setMethod("gc.bias", "list", function(x) {
     classes <- sapply(x, class)
     if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
         stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
     }
     
-    ret <- lapply(x, binned.counts, type=type)
+    ret <- lapply(x, gc.bias)
+    ret <- cbind(ret[[1]][,'gc'], do.call(cbind, lapply(ret, function(gc) gc[,2,drop=FALSE])))
+    colnames(ret)[1] <- 'gc'
+    ret
+})
+
+
+
+setGeneric("binned.counts", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count'), along=c('pos', 'gc')) standardGeneric("binned.counts"))
+setMethod("binned.counts", "SCAN2", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count'), along=c('pos', 'gc')) {
+    helper.binned.counts(tab=summarize.binned.counts(x)$sc, type=type, along=along, single.cell=x@single.cell)
+})
+
+setMethod("binned.counts", "summary.SCAN2", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count'), along=c('pos', 'gc')) {
+    helper.binned.counts(tab=x@binned.counts$sc, type=type, along=along, single.cell=x@single.cell)
+})
+
+helper.binned.counts <- function(tab, single.cell, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count'), along=c('pos', 'gc')) {
+    along <- match.arg(along)
+    type <- match.arg(type)
+    colname <- type
+    if (type == 'cnv')
+        colname <- 'garvin.ratio.gcnorm.ploidy'
+
+    if (along == 'pos') {
+        ret <- cbind(pos=as.integer((tab$start + tab$end)/2), tab[[colname]])
+        rownames(ret) <- tab$chr
+    } else if (along == 'gc') {
+        # XXX: WARNING: below must match gc.bias()
+        ret <- as.matrix(tab[,.(fit=mean(get(colname))),by=.(gc=round(GC,3))][order(gc)])
+        ret <- ret[c(diff(ret[,'gc']), 0) < 0.05,]
+    }
+    colnames(ret) <- c(along, single.cell)
+    ret
+}
+
+setMethod("binned.counts", "list", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count'), along=c('pos', 'gc')) {
+    along <- match.arg(along)
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    
+    ret <- lapply(x, binned.counts, type=type, along=along)
     rns <- rownames(ret[[1]])
-    ret <- cbind(ret[[1]][,'pos'], do.call(cbind, lapply(ret, function(bc) bc[,2,drop=FALSE])))
-    colnames(ret)[1] <- 'pos'
+    ret <- cbind(ret[[1]][,along], do.call(cbind, lapply(ret, function(bc) bc[,2,drop=FALSE])))
+    colnames(ret)[1] <- along
     rownames(ret) <- rns
     ret
 })
