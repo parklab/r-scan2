@@ -700,6 +700,61 @@ helper.plot.mutburden <- function(tab) {
 
 
 ###############################################################################
+# Plot GC content bias.
+###############################################################################
+
+setGeneric('plot.gc.bias', function(x, separate=TRUE) standardGeneric('plot.gc.bias'))
+setMethod('plot.gc.bias', 'SCAN2', function(x, separate=TRUE) {
+    helper.plot.gc.bias(gc.bias(x), binned.counts=binned.counts(x, type='ratio', along='gc'), separate=separate)
+})
+
+setMethod('plot.gc.bias', 'summary.SCAN2', function(x, separate=TRUE) {
+    helper.plot.gc.bias(gc.bias(x), binned.counts=binned.counts(x, type='ratio', along='gc'), separate=separate)
+})
+
+setMethod('plot.gc.bias', 'list', function(x, separate=FALSE) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 xs only')
+    }
+
+    helper.plot.gc.bias(gc.bias(x), binned.counts=binned.counts(x, type='ratio', along='gc'), separate=separate)
+})
+
+helper.plot.gc.bias <- function(gc.bias, binned.counts, separate=FALSE, max.nrow=3) {
+    if (separate & ncol(gc.bias) > 2) {
+        # 0 prevents plotting in layout()
+        lm <- matrix(rep(0, ncol(gc.bias)-1), nrow=min(ncol(gc.bias)-1, max.nrow))
+        lm[1:(ncol(gc.bias)-1)] <- 1:(ncol(gc.bias)-1)
+        layout(lm)
+    }
+
+    if (separate == TRUE) {
+        x.axis <- binned.counts[,1]
+        binned.counts <- binned.counts[,-1,drop=FALSE]
+        binned.counts <- apply(log2(binned.counts), 2, function(col) pmax(col, -6))
+        oldpar <- par(mar=c(4,4,0.5,0.5))
+        # use uniform axes
+        ylim <- range(binned.counts)  # don't use pretty here
+        xlim <- range(pretty(range(x.axis)))
+        for (i in 1:(ncol(gc.bias)-1)) {
+            smoothScatter(x.axis, binned.counts[,i],
+                xlim=xlim, ylim=ylim,
+                xlab='GC content of bin', ylab='log2(read count ratio)')
+            lines(gc.bias[,c(1,i+1)], lwd=2, col=2)
+            legend('topright', legend=colnames(gc.bias)[i+1])
+        }
+        par(oldpar)
+    } else {
+        matplot(gc.bias[,1], gc.bias[,-1],
+            type='l', lwd=2, lty='solid',
+            xlab='GC content of bin', ylab='log2(read count ratio)')
+    }
+}
+
+
+
+###############################################################################
 # Plot the depth profiles of 100kb "variable width" bins.  These plots are used
 # to judge amplification quality, not to call somatic CNVs like one might
 # expect.
