@@ -22,6 +22,7 @@ setClass("summary.SCAN2", slots=c(
     depth.profile='null.or.list',
     gatk.info='null.or.list',        # list of stats
     gatk.calls='null.or.dt',         # tiny uncompressed @gatk subset
+    gatk.shared='null.or.raw.or.dt', # large compressed @gatk subset with minimal columns
     gatk='null.or.raw.or.dt',        # large compressed @gatk subset
     training.data='null.or.list',
     ab.fits='null.or.list',
@@ -86,6 +87,7 @@ make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
         depth.profile=summarize.depth.profile(object, quiet=quiet),
         gatk.info=gatk.summary$gatk.info,
         gatk.calls=gatk.summary$gatk.calls,
+        gatk.shared=gatk.summary@shared.gatk,
         gatk=gatk.summary$filtered.gatk,
         training.data=summarize.training.data(object, quiet=quiet),
         ab.fits=summarize.ab.fits(object, quiet=quiet),
@@ -270,6 +272,23 @@ approxify <- function(x, n.digits=3) {
 unapproxify <- function(a) rep(as.numeric(names(a)), a)
 
 
+# Retain all sites that show evidence of sharing across cells (tcells>1) and
+# are somatic candidates.  It is important to also save all resampled training
+# sites to serve as a positive control.
+#
+# Unlike the filtered gatk table, this table contains a subset of the COLUMNs
+# of the @gatk table.
+#
+# This table must not use any *single cell specific* information when choosing
+# the retained rows so that all cells can be compared against each other.
+filter.gatk.potentially.shared <- function(object, quiet=FALSE) {
+    if (!quiet) cat("Retaining shared somatic candidates with minimal covariate data..\n")
+    ret <- object@gatk[resampled.training.site | ((somatic.candidate==T | bulk.binom.prob <= 1e-6 & bulk.af < 0.25) & (muttype=='snv'|csf.test) & tcells > 1),
+        .(chr, pos, refnt, altnt, muttype, mutsig, af, scalt, dp, abc.pv, balt, bulk.dp, resampled.training.site, pass, rescue, training.pass)]
+    compress.dt(ret)
+}
+
+
 # The full @gatk table is too big to put in a summary object. Keep enough
 # sites to allow:
 #   * plotting the local region and AB model around candidate and called mutations.
@@ -279,7 +298,6 @@ unapproxify <- function(a) rep(as.numeric(names(a)), a)
 # Retain the order of the original @gatk table.
 filter.gatk.and.nearby.hets <- function(object, flank=2500, quiet=FALSE) {
     if (!quiet) cat("Retaining candidate sites passing static filters and nearby germline hets...\n")
-    #som.idxs <- object@gatk[, which(somatic.candidate & dp.test & min.sc.alt.test & abc.test & dbsnp.test & (muttype=='snv'|csf.test))]
     # new: try to retain mosaic sites. it is important to continue to retain all sites
     # that could be rescued by mutation signature.  the bulk.af filter
     som.idxs <- object@gatk[, which(((somatic.candidate & abc.test) | (bulk.binom.prob <= 1e-6 & bulk.af < 0.25)) & dp.test & dbsnp.test & min.sc.alt.test & (muttype == 'snv' | csf.test))]
@@ -310,7 +328,8 @@ summarize.gatk <- function(object, quiet=FALSE) {
     } else {
         ret$gatk.info <- list(nrows=nrow(object@gatk))
         ret$gatk.calls <- object@gatk[pass == TRUE | rescue == TRUE]
-        ret$filtered.gatk <- filter.gatk.and.nearby.hets(object)
+        ret$filtered.gatk <- filter.gatk.and.nearby.hets(object, quiet=quiet)
+        ret$shared.gatk <- filter.gatk.potentially.shared(object, quiet=quiet)
     }
     ret
 }
