@@ -87,7 +87,7 @@ make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
         depth.profile=summarize.depth.profile(object, quiet=quiet),
         gatk.info=gatk.summary$gatk.info,
         gatk.calls=gatk.summary$gatk.calls,
-        gatk.shared=gatk.summary@shared.gatk,
+        gatk.shared=gatk.summary$shared.gatk,
         gatk=gatk.summary$filtered.gatk,
         training.data=summarize.training.data(object, quiet=quiet),
         ab.fits=summarize.ab.fits(object, quiet=quiet),
