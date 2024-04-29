@@ -97,15 +97,28 @@ helper.ab.fits <- function(ab.params, single.cell, type=c('chromosome', 'mean'),
 
 
 # Return the raw data table with all metrics used to call mutations.
-setGeneric("data", function(object) standardGeneric("data"))
-setMethod("data", "SCAN2", function(object) {
-    object@gatk
+setGeneric("data", function(object, type=c('filtered', 'shared')) standardGeneric("data"))
+setMethod("data", "SCAN2", function(object, type=c('filtered', 'shared')) {
+    helper.data(object@gatk, single.cell=object@single.cell)
 })
 
-setMethod("data", "summary.SCAN2", function(object) {
-    decompress.dt(object@gatk)
+setMethod("data", "summary.SCAN2", function(object, type=c('filtered', 'shared')) {
+    type <- match.arg(type)
+    if (type == 'filtered') {
+        helper.data(decompress.dt(object@gatk), single.cell=object@single.cell)
+    } else if (type == 'shared') {
+        helper.data(decompress.dt(object@gatk.shared), single.cell=object@single.cell)
+    }
 })
 
+helper.data <- function(tab, single.cell, type=c('filtered', 'shared')) {
+    type <- match.arg(type)
+    if (type == 'filtered') {
+        tab
+    } else if (type == 'shared') {
+        tab[, .(sample=single.cell, chr, pos, refnt, altnt, muttype, mutsig, af, scalt, dp, abc.pv, balt, bulk.dp, resampled.training.site, pass, rescue, training.pass)]
+    }
+}
 
 
 # Return all passing mutation calls. Currently these only return VAF-based calls.
@@ -188,7 +201,7 @@ setMethod("shared", 'list', function(x, muttype=c('both', 'snv', 'indel'), metho
         # Note that the inner loop creates approx. 2 data() copies at a time, so ~1 Gb of temp
         # memory usage per comparison.
         datas <- lapply(x, function(object) {
-            ret <- data(object)[muttype %in% allowed.muttypes, .(sample=object@single.cell, chr, pos, refnt, altnt, muttype, mutsig, af, dp, balt, bulk.dp, scalt, resampled.training.site, pass, rescue, training.pass)]
+            ret <- data(object, type='shared')[muttype %in% allowed.muttypes]
             # index/sort tables once so they don't have to be rekeyed by merge() O(N^2) times
             # shared.classifier() requires that setkey() has been called
             setkey(ret, chr, pos, refnt, altnt)
