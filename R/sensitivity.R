@@ -187,7 +187,14 @@ model.somatic.sensitivity <- function(tiles, muttype=c('snv', 'indel'), allelety
     # To ASSESS the model, only consider the predictions on the hold.out==TRUE set.
     predname <- paste0('pred.', muttype, '.', alleletype)
     # 1/(1+exp(-x)) is inverse logit to transform -inf..+inf values to probabilities in [0,1]
-    tiles[, (predname) := 1/(1+exp(-predict(object=model, newdata=.SD)))]
+    # rankdeficient: important for memory usage. predict() often fails on, e.g., 0-copy
+    #       sex chromosomes. when it fails, the default behavior is to attach an attr()
+    #       with a named vector of all sites that fail.  for just chrY, this vector is
+    #       ~10 Mb in size.  this large attribute is copied to any table that uses the
+    #       predname column, so the several copies of the table produced for alleletype=maj,
+    #       min and both all receive a copy.  Those copies are further propagated through
+    #       glm() calls (which save a copy their input in the model object).
+    tiles[, (predname) := 1/(1+exp(predict(object=model, newdata=.SD, rankdeficient='NA')))]
 
     model
 }
