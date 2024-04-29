@@ -983,11 +983,12 @@ setMethod("add.sensitivity.covariates", "SCAN2", function(object, abmodel.covs.p
 })
 
 
-setGeneric("compute.sensitivity.models", function(object) standardGeneric("compute.sensitivity.models"))
-setMethod("compute.sensitivity.models", "SCAN2", function(object) {
+setGeneric("compute.sensitivity.models", function(object, seed=0) standardGeneric("compute.sensitivity.models"))
+setMethod("compute.sensitivity.models", "SCAN2", function(object, seed=0) {
     data <- object@spatial.sensitivity$data
 
     # Split data into two halves for later hold-out training
+    set.seed(seed)
     data[, hold.out := rbinom(nrow(.SD), size=1, prob=1/2)]
 
     # Standardized Z-score for depth - there is still an issue where depth is generally
