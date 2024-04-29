@@ -162,14 +162,15 @@ load.summary <- function(paths, quiet=FALSE) {
 }
 
 
-# Really poor but simple lossy compression of values in [0,1] with support
-# for NA.
-# quantize.raw1 represents x as a single byte.
-# This currently means rounding to the hundredths place,
-# quantizing the vector into 101 possible values. E.g.:
-#    0.abcdefg...   ->   0.aB   ->   aB
-# where B is the result of round()ing - either b or b+1.
-# NA values are encoded as 255.
+# Simple but lossy compression of numeric values with NA support.
+#
+# quantize.raw1 represents x as a single byte by mapping each x value onto a
+# uniform grid of 254 equally spaced values over the range of x.  This means
+# that the mantissa of the float is fairly well represented if the exponent
+# range is small.  If x covers a large exponent range, then it should be
+# logged before calling quantize() to better preserve accuracy.
+#
+# NA values are encoded specially as 255.
 #
 # Reduces a float vector from 8 bytes per entry to 1:
 #     > object.size(z)/1e6
@@ -180,27 +181,38 @@ load.summary <- function(paths, quiet=FALSE) {
 #     > uqr <- unquantize.raw1(z)
 #     > object.size(uqr)/1e6
 #     24.8 bytes
-quantize.raw1 <- function(x) as.raw(ifelse(is.na(x), 255, as.integer(100*round(x, 2))))
-unquantize.raw1 <- function(x) ifelse(x == 255, NA, as.numeric(x)/100)
+quantize.raw1 <- function(x, a=min(x), b=max(x)) {
+    ret <- as.raw(ifelse(is.na(x), 255, as.integer(254*(x-a)/(b-a))))
+    attr(ret, 'a') <- a
+    attr(ret, 'b') <- b
+    ret
+}
+unquantize.raw1 <- function(x, a=attr(x, 'a'), b=attr(x, 'b'))
+    ifelse(x == 255, NA, as.integer(x)/254 * (b-a) + a)
 
-# quantize x using 2 bytes. NOTE: doubles the length of x
-quantize.raw2 <- function(x) {
+
+# quantize x using 2 bytes. NOTE: the returned value is twice as long as x,
+# so be careful when storing it alongside other values (e.g., in a data.table).
+quantize.raw2 <- function(x, a=min(x), b=max(x)) {
     # map x -> i is in [0, 10,000] or 65,535 if x=NA
-    i <- ifelse(is.na(x), 65535, as.integer(10000*round(x, 4)))
-    as.raw(as.vector(
+    i <- ifelse(is.na(x), 65535, as.integer(65534*(x-a)/(b-a)))
+    ret <- as.raw(as.vector(
         rbind(
             bitwAnd(i, 0x00FF),                 # lower byte
             bitwShiftR(bitwAnd(i, 0xFF00), 8)   # upper byte
         )
     ))
+    attr(ret, 'a') <- a
+    attr(ret, 'b') <- b
+    ret
 }
 # this is really slow. the matrix version is only slightly slower than
 # the current version.  however, still orders of magnitude faster than
 # loading a full object.
-unquantize.raw2 <- function(x) {
+unquantize.raw2 <- function(x, a=attr(x, 'a'), b=attr(x, 'b')) {
     #ret <- colSums(matrix(as.integer(x), nrow=2)*c(1,256))/10000
     ret <- readBin(x, size=2, n=length(x)/2, what='integer', signed=FALSE)
-    ifelse(ret == 65535, NA, ret/10000)
+    ifelse(ret == 65535, NA, ret/65534 * (b-a) + a)
 }
 
 
