@@ -1,32 +1,42 @@
-id83.cols <- col <- rep(c('#FBBD75', '#FC7F24', '#B0DB8E', '#3B9F36',
-    '#FBC9B6', '#F8896D', '#EE453A', '#B91C22', '#C5D4E4', '#8DBAD2',
-    '#4D98C6', '#1D65A8', '#E1E1EE', '#B5B6D6', '#8684BA', '#614398'),
-    c(rep(6,12), 1,2,3,5))
-id83.channel.order <- paste(
-    c(rep(1,24), rep(rep(2:5,each=6),2),c(2,3,3,4,4,4,5,5,5,5,5)),
-    c(rep(c('Del', 'Ins'), each=12), rep(c('Del', 'Ins'), each=24), rep('Del', 11)),
-    c(rep(rep(c('C','T'), each=6), 2), rep('R',48), rep('M', 11)),
-    c(rep(0:5, 12), c(1, 1,2, 1:3, 1:5)),
-    sep=':')
-
-
-sbs96.cols <- rep(c('deepskyblue', 'black', 'firebrick2', 'grey',
-    'chartreuse3', 'pink2'), each=16)
-sbs96.channel.order <- paste0(rep(c("A", "C", "G", "T"), each = 4), rep(c("C", "T"), 
-    each = 48), rep(c("A", "C", "G", "T"), times = 4), ":", rep(c("C", "T"), 
-    each = 48), ">", c(rep(c("A", "G", "T"), each = 16), 
-    rep(c("A", "C", "G"), each = 16)))
+#######################################################################
+# Mutation signature utilities.  While used by plotting, these are far
+# more general and belong elsewhere.
+#######################################################################
 
 sbs96 <- function(x, colname) {
-    factorize.mutsig(x, sbs96.channel.order)
+    sbs96.channel.order <- paste0(rep(c("A", "C", "G", "T"), each = 4), rep(c("C", "T"), 
+        each = 48), rep(c("A", "C", "G", "T"), times = 4), ":", rep(c("C", "T"), 
+        each = 48), ">", c(rep(c("A", "G", "T"), each = 16), 
+        rep(c("A", "C", "G"), each = 16)))
+    factor(x, levels=sbs96.channel.order, ordered=TRUE)
+}
+
+# return TRUE if x is the same set of levels in the same order as sbs96
+is.sbs96 <- function(x, reference=levels(sbs96(c()))) {
+    if (length(x) == length(reference)) {
+        all(x == reference)
+    } else {
+        FALSE
+    }
 }
 
 id83 <- function(x) {
-    factorize.mutsig(x, id83.channel.order)
+    id83.channel.order <- paste(
+        c(rep(1,24), rep(rep(2:5,each=6),2),c(2,3,3,4,4,4,5,5,5,5,5)),
+        c(rep(c('Del', 'Ins'), each=12), rep(c('Del', 'Ins'), each=24), rep('Del', 11)),
+        c(rep(rep(c('C','T'), each=6), 2), rep('R',48), rep('M', 11)),
+        c(rep(0:5, 12), c(1, 1,2, 1:3, 1:5)),
+        sep=':')
+    factor(x, levels=id83.channel.order, ordered=TRUE)
 }
 
-factorize.mutsig <- function(x, channel.order) {
-    factor(x, levels=channel.order, ordered=TRUE)
+# return TRUE if x is the same set of levels in the same order as id83
+is.id83 <- function(x, reference=levels(id83(c()))) {
+    if (length(x) == length(reference)) {
+        all(x == reference)
+    } else {
+        FALSE
+    }
 }
 
 # Simple extension of R's base table() function to make normalizing
@@ -38,10 +48,11 @@ factorize.mutsig <- function(x, channel.order) {
 #       ignored if fraction=FALSE.
 # fraction - express the mutation spectrum as a probability density
 #       function rather than counts; i.e., ensure the spectrum sums to 1.
-as.spectrum <- function (x, eps = 0.1, fraction = TRUE) {
-    t <- table(x)  # when acting on factors, table() will report 0 counts
-                   # for channels that have 0 mutations
-    if (fraction) {
+as.spectrum <- function(x, eps = 0, fraction = TRUE) {
+    # Critical: when applied to factors, table() will reports ALL channels,
+    # even 0 count channels.
+    t <- table(x)  
+    if (fraction & length(x) > 0) {  # avoid div by 0 when length=0
         t <- t + eps
         t <- t/sum(t)
     }
@@ -49,69 +60,195 @@ as.spectrum <- function (x, eps = 0.1, fraction = TRUE) {
 }
 
 
-# x - a vector of id83() factors OR a SCAN2 object
-# spectrum - an already-tabulated id83 factor spectrum
-# either x or spectrum can be supplied, but not both
-plot.sbs96 <- function(x, spectrum, xaxt='n', legend=FALSE, ...) {
-    if (missing(x) & missing(spectrum))
-        stop('exactly one of "x" or "spectrum" must be supplied')
-
-    if (!missing(x) & is(x, 'SCAN2'))
-        x <- sbs96(x@gatk$mutsig)   # Indels are automatically ignored because they don't match any of the known SBS96 channels
-
-    if (missing(spectrum))
-        spectrum <- table(x)
-
-    p <- barplot(spectrum, las=3, col=sbs96.cols,
-        space=0.5, border=NA, xaxt=xaxt, ...)
-    abline(v=(p[seq(4,length(p)-1,4)] + p[seq(5,length(p),4)])/2, col='grey')
-    if (legend) {
-        # mutation types are [context]:[refbase]>[altbase]
-        legend('topright', ncol=2, legend=c('C>A','C>G','C>T','T>A','T>C','T>G'),
-            fill=sbs96.cols[seq(1, length(sbs96.cols), 16)])
-    }
-}
-
-
-# x - a vector of id83() factors OR a SCAN2 object
-# spectrum - an already-tabulated id83 factor spectrum
-# either x or spectrum can be supplied, but not both
+#######################################################################
+# Mutation signature plotting
 #
-# detailed.x.labels - annotate each bar in the barplot with the full
-#      mutation class. E.g., "1:Del:C:0". When plotting many separate
-#      panels over X11, this can be very slow.
-plot.id83 <- function(x, spectrum, proc, xaxt='n',
-    col, border, detailed.x.labels=FALSE, ...) {
+# - plot.sbs96/id83: only supports single plots.
+# - plot.mutsig: supports layouts for list() and single plots
+#######################################################################
 
-    if (missing(x) & missing(spectrum))
-        stop('exactly one of "x" or "spectrum" must be supplied')
+sbs96.cols <- rep(c('deepskyblue', 'black', 'firebrick2', 'grey', 'chartreuse3', 'pink2'), each=16)
 
-    if (!missing(x) & is(x, 'SCAN2'))
-        x <- id83(x@gatk$mutsig)  # SNVs are automatically ignored because they don't match any of the known ID83 channels
+id83.cols <- col <- rep(c('#FBBD75', '#FC7F24', '#B0DB8E', '#3B9F36',
+    '#FBC9B6', '#F8896D', '#EE453A', '#B91C22', '#C5D4E4', '#8DBAD2',
+    '#4D98C6', '#1D65A8', '#E1E1EE', '#B5B6D6', '#8684BA', '#614398'),
+    c(rep(6,12), 1,2,3,5))
 
-    if (missing(spectrum))
-        spectrum <- table(x)
-    # else it's already tabulated
+# x - there are several ways to specify mutation signatures for plotting.
+#   (1) a vector of characters of the recognized sbs96() levels
+#   (2) a vector of sbs96 factors
+#   (3) a SCAN2 object - passig sites are used
+#   (4) a summary.SCAN2 object - passing sites are used
+#   (5) a list of SCAN2 or summary.SCAN2 objects. mixes of the two are not allowed
+#       cases (3)-(5) use the default mutsig() function.  other accessors that return
+#       the signatures of other subsets of calls can be used through the matrix case
+#       (8) below.
+#   (6) a spectrum (recognized by class(x)=table)
+#   (7) a data.table, from which the "mutsig" column will be used
+#   (8) a matrix with rownames=mutsig channel names of a known type, colnames=sample names
+#
+# show.types - show a legend of N>N mutation types
+# show.detailed.types - show trinucleotide contexts on x-axis
+# show.sample - if 'sample' is in colnames(x) or x is a SCAN2/summary.SCAN2
+#   object, print the sample name in the top left of the plot
+plot.sbs96 <- function(x, eps=0, fraction=FALSE, show.types=FALSE, show.detailed.types=FALSE, show.sample=TRUE, max.nrow=8, ...)
+{
+    mutsig.data <- prehelper.plot.mutsig(x=x, eps=eps, fraction=fraction, factor.fn=sbs96)
 
-    if (missing(border))
-        border <- id83.cols
-    if (missing(col))
-        col <- id83.cols
+    helper.plot.mutsig(spectrum=mutsig.data$spectrum, mode=mutsig.data$mode,
+        colors=sbs96.cols, cex.names=0.7, max.nrow=max.nrow,
+        show.types=show.types, show.detailed.types=show.detailed.types, show.sample=show.sample, ...)
+}
 
-    x.names <- if (detailed.x.labels) names(spectrum) else ''
-    p <- barplot(spectrum, las = 3, col = col, names.arg = x.names,
-        space = 0.5, border = border, cex.names=0.7, xaxt=xaxt, ...)
-    abline(v = (p[seq(6, length(p) - 11, 6)] + p[seq(7, length(p)-10,6)])/2, col="grey")
+plot.id83 <- function(x, eps=0, fraction=FALSE, show.types=FALSE, show.detailed.types=FALSE, show.sample=TRUE, max.nrow=8, ...)
+{
+    mutsig.data <- prehelper.plot.mutsig(x=x, eps=eps, fraction=fraction, factor.fn=id83)
 
-    if (xaxt != 'n') {
-        mtext(text=c('del C', 'del T', 'ins C', 'ins T', 'del 2', 'del 3', 'del 4',
-            'del 5+', 'ins 2', 'ins 3', 'ins 4', 'ins 5+', 'microhom.'),
-            side=1, at=c(mean(p[1:6]), mean(p[7:12]), mean(p[13:18]),
-                mean(p[19:24]), mean(p[25:30]), mean(p[31:36]),
-                mean(p[37:42]), mean(p[43:48]), mean(p[49:54]),
-                mean(p[55:60]), mean(p[61:66]), mean(p[67:72]), mean(p[73:83])))
+    helper.plot.mutsig(spectrum=mutsig.data$spectrum, mode=mutsig.data$mode,
+        colors=id83.cols, cex.names=0.7, max.nrow=max.nrow,
+        show.types=show.types, show.detailed.types=show.detailed.types, show.sample=show.sample, ...)
+}
+
+# Handle all of the possible forms of x
+prehelper.plot.mutsig <- function(x, factor.fn, eps=0, fraction=FALSE) {
+    if (is.numeric(x) & length(dim(x)) == 2) {
+        # x is a numeric matrix. see if the rownames match a known mutation signature type.
+        # if it does, then it is already in the proper format. sample names as colum names
+        # are a bonus.
+        if (is.sbs96(rownames(x))) {
+            mode <- 'sbs96'
+        } else if (is.id83(rownames(x))) {
+            mode <- 'id83'
+        } else {
+            stop('x is a matrix, but its rownames do not match a known mutation signature type')
+        }
+        spectrum <- x
+        if (fraction)
+            spectrum <- apply(spectrum, 2, function(col) (col + eps) / sum(col + eps))
+    } else {
+        sample.name <- NULL
+        if (is.sbs96(levels(factor.fn(c())))) {
+            mode <- 'sbs96'
+        } else if (is.id83(levels(factor.fn(c())))) {
+            mode <- 'id83'
+        } else {
+            stop('factor.fn() does not match sbs96 or id83')
+        }
+
+        if (is(x, 'SCAN2') | is(x, 'summary.SCAN2') | is(x, 'list')) {
+            spectrum <- mutsig(x, sigtype=mode, eps=eps, fraction=fraction)
+        } else {
+            if (is.data.table(x)) {
+                spectrum <- as.spectrum(factor.fn(x$mutsig), eps=eps, fraction=fraction)
+                if ('sample' %in% colnames(x) & all(x$sample == x$sample[1]))
+                    sample.name <- x$sample[1]
+            } else if (is.character(x)) {
+                spectrum <- as.spectrum(factor.fn(x), eps=eps, fraction=fraction)
+            } else if (is.factor(x)) {
+                if (!all(levels(x) == levels(factor.fn(c()))))
+                    stop("x is factor but levels do not match factor.fn(c())")
+                spectrum <- as.spectrum(x, eps=eps, fraction=fraction)
+            } else if (is(x, 'table')) {
+                # nothing to do
+                spectrum <- x
+            } else {
+                stop("x must be character, factor, table, data.table or a SCAN2 object")
+            }
+            spectrum <- t(t(spectrum))
+            colnames(spectrum) <- sample.name
+            names(dimnames(spectrum)) <- NULL
+        }
+    }
+
+    list(mode=mode, spectrum=spectrum)
+}
+
+helper.plot.mutsig <- function(spectrum, colors, ylim, mode=c('sbs96', 'id83'), cex.names=0.7, show.types=FALSE, show.detailed.types=FALSE, show.sample=TRUE, max.nrow=8, ...)
+{
+    mode <- match.arg(mode)
+
+    botlines <- 1/4
+    if (show.detailed.types & mode == 'id83')
+        botlines <- botlines + 5*cex.names   # format: N:NNN:N:N 
+    else if (show.detailed.types & mode == 'sbs96')
+        botlines <- botlines + 2*cex.names     # format: NNN
+
+    toplines <- 1/2
+    if (show.types)
+        toplines <- toplines + 1
+
+    if (missing(ylim))
+        ylim <- c(0, max(spectrum)*1.20)
+
+    if (ncol(spectrum) > 1) {
+        lm <- matrix(0, nrow=min(max.nrow, ncol(spectrum)), ncol=ceiling(ncol(spectrum)/max.nrow))
+        lm[1:ncol(spectrum)] <- 1:ncol(spectrum)
+        layout(lm)
+    }
+
+    mar <- c(botlines,4,toplines,1/4)
+    for (i in 1:ncol(spectrum)) {
+        helper.plot.mutsig.one(spectrum=spectrum[,i], mode=mode,
+            sample.name=colnames(spectrum)[i],   # colnames will be lost on [,i]
+            col=colors, ylim=ylim, mar=mar,
+            show.types=show.types, show.detailed.types=show.detailed.types, show.sample=show.sample, ...)
     }
 }
+
+helper.plot.mutsig.one <- function(spectrum, sample.name, colors, ylim, mar, mode=c('sbs96', 'id83'), cex.names=0.7, show.types=FALSE, show.detailed.types=FALSE, show.sample=TRUE, ...)
+{
+    mode <- match.arg(mode)
+    oldpar <- par(mar=mar)
+    p <- barplot(spectrum, col=colors, space=0.5,
+        xaxs='i', border=NA, xaxt='n', ylim=ylim, ...)
+
+    if (show.detailed.types) {
+        x.names <- names(spectrum)
+        # sbs96 names are NNN:N>N where NNN is the trinucleotide context and
+        # N>N is the base change.  get rid of the base change portion.
+        if (mode == 'sbs96')
+            x.names <- sub(pattern=':.>.', replacement='', x=x.names)
+
+        line <- ifelse(mode == 'sbs96', -1, -1)
+        axis(side=1, at=p, labels=x.names, tick=FALSE,
+            family='mono', las=3, cex.axis=cex.names, line=line)
+    }
+
+    if (mode == 'sbs96') {
+        abline(v=(p[seq(4,length(p)-1,4)] + p[seq(5,length(p),4)])/2,
+            col=c(rep('grey', 3), 'black'))
+        if (show.types) {
+            # mutation types are [context]:[refbase]>[altbase]
+            #legend('topright', ncol=2, legend=c('C>A','C>G','C>T','T>A','T>C','T>G'),
+                #fill=sbs96.cols[seq(1, length(sbs96.cols), 16)])
+            mtext(text=c('C>A', 'C>G', 'C>T', 'T>A', 'T>C', 'T>G'),
+                side=3, font=2,  # font=2 -> bold font
+                at=c(mean(p[1:16]), mean(p[17:32]), mean(p[33:48]),
+                    mean(p[49:64]), mean(p[65:80]), mean(p[81:96])))
+        }
+    } else if (mode == 'id83') {
+        abline(v = (p[seq(6, length(p) - 11, 6)] + p[seq(7, length(p)-10,6)])/2, col="grey")
+        if (show.types) {
+            mtext(text=c('del C', 'del T', 'ins C', 'ins T', 'del 2', 'del 3', 'del 4',
+                'del 5+', 'ins 2', 'ins 3', 'ins 4', 'ins 5+', 'microhom.'),
+                side=3, at=c(mean(p[1:6]), mean(p[7:12]), mean(p[13:18]),
+                    mean(p[19:24]), mean(p[25:30]), mean(p[31:36]),
+                    mean(p[37:42]), mean(p[43:48]), mean(p[49:54]),
+                    mean(p[55:60]), mean(p[61:66]), mean(p[67:72]), mean(p[73:83])))
+        }
+    }
+
+    if (show.sample & !is.null(sample.name)) {
+        if (nchar(sample.name) > 0) {
+            legend('topleft', legend=sample.name, box.col=NA, bg='white',
+                inset=c(0.01, 0), x.intersp=0, text.font=2)
+        }
+    }
+
+    par(oldpar)
+}
+
+
 
 
 #######################################################################
