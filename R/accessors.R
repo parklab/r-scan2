@@ -274,30 +274,30 @@ helper.training <- function(data, single.cell, muttype=c('both', 'snv', 'indel')
 
 
 # Return the raw data table with all metrics used to call mutations.
-setGeneric("mutsig", function(x, sigtype=c('sbs96', 'id83')) standardGeneric("mutsig"))
-setMethod("mutsig", "SCAN2", function(x, sigtype=c('sbs96', 'id83')) {
-    helper.mutsig(passing(x, muttype='both'), single.cell=name(x), sigtype=sigtype)
+setGeneric("mutsig", function(x, sigtype=c('sbs96', 'id83'), eps=0, fraction=FALSE) standardGeneric("mutsig"))
+setMethod("mutsig", "SCAN2", function(x, sigtype=c('sbs96', 'id83'), eps=0, fraction=FALSE) {
+    helper.mutsig(passing(x, muttype='both'), single.cell=name(x), sigtype=sigtype, eps=eps, fraction=fraction)
 })
 
-setMethod("mutsig", "summary.SCAN2", function(x, sigtype=c('sbs96', 'id83')) {
-    helper.mutsig(passing(x, muttype='both'), single.cell=name(x), sigtype=sigtype)
+setMethod("mutsig", "summary.SCAN2", function(x, sigtype=c('sbs96', 'id83'), eps=0, fraction=FALSE) {
+    helper.mutsig(passing(x, muttype='both'), single.cell=name(x), sigtype=sigtype, eps=eps, fraction=fraction)
 })
 
-setMethod("mutsig", "list", function(x, sigtype=c('sbs96', 'id83')) {
+setMethod("mutsig", "list", function(x, sigtype=c('sbs96', 'id83'), eps=0, fraction=FALSE) {
     classes <- sapply(x, class)
     if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
         stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
     }
     
-    do.call(cbind, lapply(x, mutsig, sigtype=sigtype))
+    do.call(cbind, lapply(x, mutsig, sigtype=sigtype, eps=eps, fraction=fraction))
 })
 
-helper.mutsig <- function(passtab, single.cell, sigtype=c('sbs96', 'id83')) {
+helper.mutsig <- function(passtab, single.cell, sigtype=c('sbs96', 'id83'), eps=0, fraction=FALSE) {
     sigtype <- match.arg(sigtype)
     if (sigtype == 'sbs96') {
-        ret <- table(sbs96(passtab[muttype == 'snv']$mutsig))
+        ret <- as.spectrum(sbs96(passtab[muttype == 'snv']$mutsig), eps=eps, fraction=fraction)
     } else if (sigtype == 'id83') {
-        ret <- table(id83(passtab[muttype == 'indel']$mutsig))
+        ret <- as.spectrum(id83(passtab[muttype == 'indel']$mutsig), eps=eps, fraction=fraction)
     }
     ret <- as.matrix(ret)
     colnames(ret) <- single.cell
