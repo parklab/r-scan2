@@ -171,7 +171,7 @@ setMethod("passing", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'inde
 
     # Still need pass==T because this table also contains rescued calls (if
     # rescue was performed).
-    x@gatk.calls[pass == TRUE & muttype %in% mt]
+    data.table(sample=name(x), x@gatk.calls[pass == TRUE & muttype %in% mt])
 })
 
 setMethod("passing", "list", function(x, muttype=c('both', 'snv', 'indel')) {
@@ -186,7 +186,7 @@ setMethod("passing", "list", function(x, muttype=c('both', 'snv', 'indel')) {
         # leave this in or else data.table will complain about different column
         # names between tables. (it is also useless)
         tab[[name(x)]] <- NULL  
-        cbind(sample=name(x), tab)
+        tab
     }))
 })
 
@@ -268,7 +268,7 @@ helper.training <- function(data, single.cell, muttype=c('both', 'snv', 'indel')
     if (mt == 'both')
         mt <-c('snv', 'indel')
 
-    data[training.site == TRUE & muttype %in% mt, .(sample=single.cell, .SD)]
+    data[training.site == TRUE & muttype %in% mt]
 }
 
 
