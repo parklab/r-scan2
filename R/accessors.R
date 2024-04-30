@@ -255,20 +255,20 @@ setMethod("shared", 'list', function(x, muttype=c('both', 'snv', 'indel'), metho
 # Return all training heterozygous SNPs.
 setGeneric("training", function(object, muttype=c('both', 'snv', 'indel')) standardGeneric("training"))
 setMethod("training", "SCAN2", function(object, muttype=c('both', 'snv', 'indel')) {
-    helper.training(data=data(object), muttype=muttype)
+    helper.training(data=data(object), muttype=muttype, single.cell=name(object))
 })
 
 setMethod("training", "summary.SCAN2", function(object, muttype=c('both', 'snv', 'indel')) {
-    helper.training(data=data(object), muttype=muttype)
+    helper.training(data=data(object), muttype=muttype, single.cell=name(object))
 })
 
-helper.training <- function(data, muttype=c('both', 'snv', 'indel')) {
+helper.training <- function(data, single.cell, muttype=c('both', 'snv', 'indel')) {
     mt <- match.arg(muttype)
 
     if (mt == 'both')
         mt <-c('snv', 'indel')
 
-    data[training.site == TRUE & muttype %in% mt]
+    data[training.site == TRUE & muttype %in% mt, .(sample=single.cell, .SD)]
 }
 
 
