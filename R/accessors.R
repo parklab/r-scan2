@@ -20,7 +20,7 @@ setMethod("name", "list", function(x) {
 setGeneric("abmodel.cov", function(x, type=c('fit', 'neighbor', 'neighbor.corrected', 'all')) standardGeneric("abmodel.cov"))
 setMethod("abmodel.cov", "SCAN2", function(x, type=c('fit', 'neighbor', 'neighbor.corrected', 'all')) {
     helper.abmodel.cov(
-        single.cell=x@single.cell,
+        single.cell=name(x),
         ab.params=ab.fits(x, type='mean'),
         approx=approx.abmodel.covariance(x, bin.breaks=c(1, 10^seq(1,5,length.out=50))),
         type=type,
@@ -29,7 +29,7 @@ setMethod("abmodel.cov", "SCAN2", function(x, type=c('fit', 'neighbor', 'neighbo
 
 setMethod("abmodel.cov", "summary.SCAN2", function(x, type=c('fit', 'neighbor', 'neighbor.corrected', 'all')) {
     helper.abmodel.cov(
-        single.cell=x@single.cell,
+        single.cell=name(x),
         ab.params=ab.fits(x, type='mean'),
         approx=x@training.data$neighbor.cov.approx.full,
         type=type,
@@ -75,12 +75,12 @@ helper.abmodel.cov <- function(ab.params, approx, single.cell, at=10^seq(1,5,len
 # IMPORTANT: when type=mean, sex chromosomes are excluded
 setGeneric("ab.fits", function(x, type=c('chromosome', 'mean'), keep.cols=FALSE) standardGeneric("ab.fits"))
 setMethod("ab.fits", "SCAN2", function(x, type=c('chromosome', 'mean'), keep.cols=FALSE) {
-    helper.ab.fits(ab.params=x@ab.fits, single.cell=x@single.cell,
+    helper.ab.fits(ab.params=x@ab.fits, single.cell=name(x),
         sex.chroms=get.sex.chroms(x), type=type, keep.cols=keep.cols)
 })
 
 setMethod("ab.fits", "summary.SCAN2", function(x, type=c('chromosome', 'mean'), keep.cols=FALSE) {
-    helper.ab.fits(ab.params=x@ab.fits$params, single.cell=x@single.cell,
+    helper.ab.fits(ab.params=x@ab.fits$params, single.cell=name(x),
         sex.chroms=get.sex.chroms(x), type=type, keep.cols=keep.cols)
 })
 
@@ -120,17 +120,17 @@ helper.ab.fits <- function(ab.params, single.cell, type=c('chromosome', 'mean'),
 # fewer columns is returned.
 setGeneric("data", function(object, type=c('filtered', 'shared')) standardGeneric("data"))
 setMethod("data", "SCAN2", function(object, type=c('filtered', 'shared')) {
-    helper.data(object@gatk, single.cell=object@single.cell)
+    helper.data(object@gatk, single.cell=name(object))
 })
 
 setMethod("data", "summary.SCAN2", function(object, type=c('filtered', 'shared')) {
     type <- match.arg(type)
 
-    ret <- helper.data(decompress.dt(object@gatk), single.cell=object@single.cell, type=type)
+    ret <- helper.data(decompress.dt(object@gatk), single.cell=name(object), type=type)
     if (type == 'shared') {
         ordered.chroms <- ret[!duplicated(chr),chr]
         ret <- rbind(ret,
-            helper.data(decompress.dt(object@gatk.shared), single.cell=object@single.cell, type=type))
+            helper.data(decompress.dt(object@gatk.shared), single.cell=name(object), type=type))
         # remove duplicate rows and sort table
         ret <- ret[!duplicated(paste(chr, pos, refnt, altnt))]
         ret[, chr := factor(chr, levels=ordered.chroms, ordered=TRUE)]
@@ -183,8 +183,8 @@ setMethod("passing", "list", function(x, muttype=c('both', 'snv', 'indel')) {
         # the data table contains a column named after the single cell ID.  cannot
         # leave this in or else data.table will complain about different column
         # names between tables. (it is also useless)
-        tab[[x@single.cell]] <- NULL  
-        cbind(sample=x@single.cell, tab)
+        tab[[name(x)]] <- NULL  
+        cbind(sample=name(x), tab)
     }))
 })
 
@@ -274,11 +274,11 @@ helper.training <- function(data, muttype=c('both', 'snv', 'indel')) {
 # Return the raw data table with all metrics used to call mutations.
 setGeneric("mutsig", function(x, sigtype=c('sbs96', 'id83')) standardGeneric("mutsig"))
 setMethod("mutsig", "SCAN2", function(x, sigtype=c('sbs96', 'id83')) {
-    helper.mutsig(passing(x, muttype='both'), single.cell=x@single.cell, sigtype=sigtype)
+    helper.mutsig(passing(x, muttype='both'), single.cell=name(x), sigtype=sigtype)
 })
 
 setMethod("mutsig", "summary.SCAN2", function(x, sigtype=c('sbs96', 'id83')) {
-    helper.mutsig(passing(x, muttype='both'), single.cell=x@single.cell, sigtype=sigtype)
+    helper.mutsig(passing(x, muttype='both'), single.cell=name(x), sigtype=sigtype)
 })
 
 setMethod("mutsig", "list", function(x, sigtype=c('sbs96', 'id83')) {
@@ -314,11 +314,11 @@ helper.mutsig <- function(passtab, single.cell, sigtype=c('sbs96', 'id83')) {
 setGeneric("ab.distn", function(x, type=c('af', 'ab')) standardGeneric("ab.distn"))
 setMethod("ab.distn", "SCAN2", function(x, type=c('af', 'ab')) {
     ab <- summarize.ab.distn(x)
-    helper.ab.distn(ab=ab, type=type, single.cell=x@single.cell)
+    helper.ab.distn(ab=ab, type=type, single.cell=name(x))
 })
 
 setMethod("ab.distn", "summary.SCAN2", function(x, type=c('af', 'ab')) {
-    helper.ab.distn(ab=x@ab.distn, type=type, single.cell=x@single.cell)
+    helper.ab.distn(ab=x@ab.distn, type=type, single.cell=name(x))
 })
 
 helper.ab.distn <- function(ab, single.cell, type=c('af', 'ab')) {
@@ -354,11 +354,11 @@ setMethod("ab.distn", "list", function(x, type=c('af', 'ab')) {
 
 setGeneric("dp.distn", function(x) standardGeneric("dp.distn"))
 setMethod("dp.distn", "SCAN2", function(x) {
-    helper.dp.distn(dp=rowSums(x@depth.profile$dptab), single.cell=x@single.cell)
+    helper.dp.distn(dp=rowSums(x@depth.profile$dptab), single.cell=name(x))
 })
 
 setMethod("dp.distn", "summary.SCAN2", function(x) {
-    helper.dp.distn(dp=rowSums(decompress.dt(x@depth.profile$dptab)),single.cell=x@single.cell)
+    helper.dp.distn(dp=rowSums(decompress.dt(x@depth.profile$dptab)),single.cell=name(x))
 })
 
 helper.dp.distn <- function(dp, single.cell) {
@@ -386,17 +386,17 @@ setMethod("mapd", "SCAN2", function(x, type=c('curve', 'canonical')) {
     type <- match.arg(type)
     s <- summarize.mapd(x)
     if (type == 'canonical')
-        setNames(s$canonical.mapd, x@single.cell)
+        setNames(s$canonical.mapd, name(x))
     else
-        setNames(s$mapds, c('binsize', x@single.cell))
+        setNames(s$mapds, c('binsize', name(x)))
 })
 
 setMethod("mapd", "summary.SCAN2", function(x, type=c('curve', 'canonical')) {
     type <- match.arg(type)
     if (type == 'canonical')
-        setNames(x@mapd$canonical.mapd, x@single.cell)
+        setNames(x@mapd$canonical.mapd, name(x))
     else
-        setNames(x@mapd$mapds, c('binsize', x@single.cell))
+        setNames(x@mapd$mapds, c('binsize', name(x)))
 })
 
 setMethod("mapd", "list", function(x, type=c('curve', 'canonical')) {
@@ -424,11 +424,11 @@ setMethod("mapd", "list", function(x, type=c('curve', 'canonical')) {
 setGeneric("gc.bias", function(x) standardGeneric("gc.bias"))
 setMethod("gc.bias", "SCAN2", function(x) {
     bc <- summarize.binned.counts(x)$sc
-    helper.gc.bias(bc, single.cell=x@single.cell)
+    helper.gc.bias(bc, single.cell=name(x))
 })
 
 setMethod("gc.bias", "summary.SCAN2", function(x) {
-    helper.gc.bias(x@binned.counts$sc, single.cell=x@single.cell)
+    helper.gc.bias(x@binned.counts$sc, single.cell=name(x))
 })
 
 # This function just inverts whatever gc.correct() did to derive
@@ -464,11 +464,11 @@ setMethod("gc.bias", "list", function(x) {
 
 setGeneric("binned.counts", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count'), along=c('pos', 'gc')) standardGeneric("binned.counts"))
 setMethod("binned.counts", "SCAN2", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count'), along=c('pos', 'gc')) {
-    helper.binned.counts(tab=summarize.binned.counts(x)$sc, type=type, along=along, single.cell=x@single.cell)
+    helper.binned.counts(tab=summarize.binned.counts(x)$sc, type=type, along=along, single.cell=name(x))
 })
 
 setMethod("binned.counts", "summary.SCAN2", function(x, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count'), along=c('pos', 'gc')) {
-    helper.binned.counts(tab=x@binned.counts$sc, type=type, along=along, single.cell=x@single.cell)
+    helper.binned.counts(tab=x@binned.counts$sc, type=type, along=along, single.cell=name(x))
 })
 
 helper.binned.counts <- function(tab, single.cell, type=c('cnv', 'ratio.gcnorm', 'ratio', 'count'), along=c('pos', 'gc')) {
