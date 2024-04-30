@@ -118,6 +118,8 @@ helper.ab.fits <- function(ab.params, single.cell, type=c('chromosome', 'mean'),
 # Return the raw data table with all metrics used to call mutations.
 # When type=shared, a larger data.table (a superset of type=filtered) with
 # fewer columns is returned.
+#
+# data() always adds an initial column with the sample's name()
 setGeneric("data", function(object, type=c('filtered', 'shared')) standardGeneric("data"))
 setMethod("data", "SCAN2", function(object, type=c('filtered', 'shared')) {
     helper.data(object@gatk, single.cell=name(object))
@@ -143,7 +145,7 @@ setMethod("data", "summary.SCAN2", function(object, type=c('filtered', 'shared')
 helper.data <- function(tab, single.cell, type=c('filtered', 'shared')) {
     type <- match.arg(type)
     if (type == 'filtered') {
-        tab
+        data.table(sample=single.cell, tab)
     } else if (type == 'shared') {
         tab[, .(sample=single.cell, chr, pos, refnt, altnt, muttype, mutsig, af, scalt, dp, abc.pv, balt, bulk.dp, resampled.training.site, pass, rescue, training.pass)]
     }
