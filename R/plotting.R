@@ -62,9 +62,6 @@ as.spectrum <- function(x, eps = 0, fraction = TRUE) {
 
 #######################################################################
 # Mutation signature plotting
-#
-# - plot.sbs96/id83: only supports single plots.
-# - plot.mutsig: supports layouts for list() and single plots
 #######################################################################
 
 sbs96.cols <- rep(c('deepskyblue', 'black', 'firebrick2', 'grey', 'chartreuse3', 'pink2'), each=16)
