@@ -182,20 +182,20 @@ load.summary <- function(paths, quiet=FALSE) {
 #     > object.size(uqr)/1e6
 #     24.8 bytes
 quantize.raw1 <- function(x, a=min(x, na.rm=TRUE), b=max(x, na.rm=TRUE)) {
-    ret <- as.raw(ifelse(is.na(x), 255, as.integer(254*(x-a)/(b-a))))
+    ret <- as.raw(ifelse(is.na(x), 255L, as.integer(254*(x-a)/(b-a))))
     attr(ret, 'a') <- a
     attr(ret, 'b') <- b
     ret
 }
 unquantize.raw1 <- function(x, a=attr(x, 'a'), b=attr(x, 'b'))
-    ifelse(x == 255, NA, as.integer(x)/254 * (b-a) + a)
+    ifelse(x == 255L, NA, as.integer(x)/254 * (b-a) + a)
 
 
 # quantize x using 2 bytes. NOTE: the returned value is twice as long as x,
 # so be careful when storing it alongside other values (e.g., in a data.table).
 quantize.raw2 <- function(x, a=min(x, na.rm=TRUE), b=max(x, na.rm=TRUE)) {
     # map x -> i is in [0, 10,000] or 65,535 if x=NA
-    i <- ifelse(is.na(x), 65535, as.integer(65534*(x-a)/(b-a)))
+    i <- ifelse(is.na(x), 65535L, as.integer(65534*(x-a)/(b-a)))
     ret <- as.raw(as.vector(
         rbind(
             bitwAnd(i, 0x00FF),                 # lower byte
@@ -212,7 +212,7 @@ quantize.raw2 <- function(x, a=min(x, na.rm=TRUE), b=max(x, na.rm=TRUE)) {
 unquantize.raw2 <- function(x, a=attr(x, 'a'), b=attr(x, 'b')) {
     #ret <- colSums(matrix(as.integer(x), nrow=2)*c(1,256))/10000
     ret <- readBin(x, size=2, n=length(x)/2, what='integer', signed=FALSE)
-    ifelse(ret == 65535, NA, ret/65534 * (b-a) + a)
+    ifelse(ret == 65535L, NA, ret/65534 * (b-a) + a)
 }
 
 
@@ -667,7 +667,7 @@ summarize.spatial.sensitivity <- function(object, quiet=FALSE) {
         # to match whatever tile.genome returns. Seems the space tradeoff isn't worth making things
         # more brittle.
         ret$predicted.sensitivity <-
-            compress.spatial.sens(ss$data[,.(chr,start,end,pred.snv.maj,pred.snv.min, pred.indel.maj, pred.indel.min)])
+            compress.spatial.sens(ss$data[,.(chr,start,end,gp.mu,gp.sd,pred.snv.maj,pred.snv.min,pred.indel.maj,pred.indel.min)])
     }
     ret
 }
