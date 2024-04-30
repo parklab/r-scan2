@@ -97,6 +97,8 @@ helper.ab.fits <- function(ab.params, single.cell, type=c('chromosome', 'mean'),
 
 
 # Return the raw data table with all metrics used to call mutations.
+# When type=shared, a larger data.table (a superset of type=filtered) with
+# fewer columns is returned.
 setGeneric("data", function(object, type=c('filtered', 'shared')) standardGeneric("data"))
 setMethod("data", "SCAN2", function(object, type=c('filtered', 'shared')) {
     helper.data(object@gatk, single.cell=object@single.cell)
@@ -104,11 +106,19 @@ setMethod("data", "SCAN2", function(object, type=c('filtered', 'shared')) {
 
 setMethod("data", "summary.SCAN2", function(object, type=c('filtered', 'shared')) {
     type <- match.arg(type)
-    if (type == 'filtered') {
-        helper.data(decompress.dt(object@gatk), single.cell=object@single.cell)
-    } else if (type == 'shared') {
-        helper.data(decompress.dt(object@gatk.shared), single.cell=object@single.cell)
+
+    ret <- helper.data(decompress.dt(object@gatk), single.cell=object@single.cell, type=type)
+    if (type == 'shared') {
+        ordered.chroms <- ret[!duplicated(chr),chr]
+        ret <- rbind(ret,
+            helper.data(decompress.dt(object@gatk.shared), single.cell=object@single.cell, type=type))
+        # remove duplicate rows and sort table
+        ret <- ret[!duplicated(paste(chr, pos, refnt, altnt))]
+        ret[, chr := factor(chr, levels=ordered.chroms, ordered=TRUE)]
+        ret <- ret[order(chr, pos, refnt, altnt)]
+        ret[, chr := as.character(chr)]
     }
+    ret
 })
 
 helper.data <- function(tab, single.cell, type=c('filtered', 'shared')) {
@@ -202,9 +212,9 @@ setMethod("shared", 'list', function(x, muttype=c('both', 'snv', 'indel'), metho
         # memory usage per comparison.
         datas <- lapply(x, function(object) {
             ret <- data(object, type='shared')[muttype %in% allowed.muttypes]
-            # index/sort tables once so they don't have to be rekeyed by merge() O(N^2) times
-            # shared.classifier() requires that setkey() has been called
-            setkey(ret, chr, pos, refnt, altnt)
+            # index tables once to avoid rekeying by merge() O(N^2) times
+            # shared.classifier() requires that setindex() has been called
+            setindex(ret, chr, pos, refnt, altnt)
             ret
         })
         ret <- rbindlist(lapply(seq_along(x), function(i) {
