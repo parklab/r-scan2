@@ -181,7 +181,7 @@ load.summary <- function(paths, quiet=FALSE) {
 #     > uqr <- unquantize.raw1(z)
 #     > object.size(uqr)/1e6
 #     24.8 bytes
-quantize.raw1 <- function(x, a=min(x), b=max(x)) {
+quantize.raw1 <- function(x, a=min(x, na.rm=TRUE), b=max(x, na.rm=TRUE)) {
     ret <- as.raw(ifelse(is.na(x), 255, as.integer(254*(x-a)/(b-a))))
     attr(ret, 'a') <- a
     attr(ret, 'b') <- b
@@ -193,7 +193,7 @@ unquantize.raw1 <- function(x, a=attr(x, 'a'), b=attr(x, 'b'))
 
 # quantize x using 2 bytes. NOTE: the returned value is twice as long as x,
 # so be careful when storing it alongside other values (e.g., in a data.table).
-quantize.raw2 <- function(x, a=min(x), b=max(x)) {
+quantize.raw2 <- function(x, a=min(x, na.rm=TRUE), b=max(x, na.rm=TRUE)) {
     # map x -> i is in [0, 10,000] or 65,535 if x=NA
     i <- ifelse(is.na(x), 65535, as.integer(65534*(x-a)/(b-a)))
     ret <- as.raw(as.vector(
@@ -221,9 +221,7 @@ unquantize.raw2 <- function(x, a=attr(x, 'a'), b=attr(x, 'b')) {
 # use a couple of tricks (including lossy compression) to reduce the table
 # size >10-fold.
 #
-# q - the quantize.rawN lossy compression function for compressing sens. values
-#   quantize.raw1 has 2 digit precision - [0.00 - 0.99, 1]
-#   quantize.raw2 has 4 digit precision - [0.0000 - 0.9999, 1]
+# q - the quantize.rawN lossy compression function for compressing sens numerics.
 compress.spatial.sens <- function(tab, q=quantize.raw2) {
     # run length encoding essentially removes this column
     list(chrom.rle=rle(tab$chr),          
@@ -231,6 +229,8 @@ compress.spatial.sens <- function(tab, q=quantize.raw2) {
         # dt2 is longer than dt1 if quantize.raw2 is used (twice as long)
         dt2=compress.dt(
             data.table(
+                gp.mu=q(tab$gp.mu),
+                gp.sd=q(tab$gp.sd),
                 pred.snv.maj=q(tab$pred.snv.maj),
                 pred.snv.min=q(tab$pred.snv.min),
                 pred.indel.maj=q(tab$pred.indel.maj),
@@ -245,6 +245,8 @@ decompress.spatial.sens <- function(comptab, unq=unquantize.raw2) {
     dt1 <- decompress.dt(comptab$dt1)
     dt2 <- decompress.dt(comptab$dt2)
     cbind(chr=inverse.rle(comptab$chrom.rle), dt1,
+        gp.mu=unq(dt2$gp.mu),
+        gp.sd=unq(dt2$gp.sd),
         pred.snv.maj=unq(dt2$pred.snv.maj),
         pred.snv.min=unq(dt2$pred.snv.min),
         pred.indel.maj=unq(dt2$pred.indel.maj),
@@ -285,8 +287,9 @@ unapproxify <- function(a) rep(as.numeric(names(a)), a)
 
 
 # Retain all sites that show evidence of sharing across cells (tcells>1) and
-# are somatic candidates.  It is important to also save all resampled training
-# sites to serve as a positive control.
+# are somatic candidates.  Resampled training sites act as a positive control
+# but do NOT need to be saved here since they are saved in the filtered gatk
+# table (with all columns).
 #
 # Unlike the filtered gatk table, this table contains a subset of the COLUMNs
 # of the @gatk table.
@@ -295,8 +298,8 @@ unapproxify <- function(a) rep(as.numeric(names(a)), a)
 # the retained rows so that all cells can be compared against each other.
 filter.gatk.potentially.shared <- function(object, quiet=FALSE) {
     if (!quiet) cat("Retaining shared somatic candidates with minimal covariate data..\n")
-    ret <- object@gatk[resampled.training.site | ((somatic.candidate==T | bulk.binom.prob <= 1e-6 & bulk.af < 0.25) & (muttype=='snv'|csf.test) & tcells > 1),
-        .(chr, pos, refnt, altnt, muttype, mutsig, af, scalt, dp, abc.pv, balt, bulk.dp, resampled.training.site, pass, rescue, training.pass)]
+    ret <- object@gatk[(somatic.candidate==T | bulk.binom.prob <= 1e-6 & bulk.af < 0.25) & (muttype=='snv'|csf.test) & tcells > 1,
+        .(chr, pos, refnt, altnt, muttype, mutsig, tcells, unique.bulks, unique.donors, af, scalt, dp, abc.pv, balt, bulk.dp, resampled.training.site, pass, rescue, training.pass)]
     compress.dt(ret)
 }
 
