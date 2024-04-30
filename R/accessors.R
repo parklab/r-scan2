@@ -1,3 +1,22 @@
+setGeneric("name", function(x) standardGeneric("name"))
+setMethod("name", "SCAN2", function(x) {
+    x@single.cell
+})
+
+setMethod("name", "summary.SCAN2", function(x) {
+    x@single.cell
+})
+
+setMethod("name", "list", function(x) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    sapply(x, name)
+})
+
+
+
 setGeneric("abmodel.cov", function(x, type=c('fit', 'neighbor', 'neighbor.corrected', 'all')) standardGeneric("abmodel.cov"))
 setMethod("abmodel.cov", "SCAN2", function(x, type=c('fit', 'neighbor', 'neighbor.corrected', 'all')) {
     helper.abmodel.cov(
