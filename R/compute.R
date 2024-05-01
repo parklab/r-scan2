@@ -106,8 +106,17 @@ compute.ab.given.sites.and.training.data <- function(sites, training.hsnps, ab.f
 
 
 # Very simple approximation of how correlation is affected by binomial sampling.
+# Generate correlated normal pairs, which represent a pair of hSNP VAFs (p1, p2).
+# Then sample observed VAFs via {x1,x2}/depth where x1 ~ Bin(p1, depth), x2 ~ Bin(p2, depth)
+# Then calculate observed correlation of the observed VAF pairs.
+#
+# n.samples=1e4 is still a little noisy, especially for low depth.
+#
+# There are many reasons why this is not a particularly accurate model of our
+# data. Its results are only used in diagnostics.
 binomial.effect.on.correlation <- function(cor, depth, n.samples=1e4) {
     # latent variable in normal space
+    # Note to self: mvnfast doesn't improve
     L <- MASS::mvrnorm(n=n.samples, mu=c(0,0), Sigma=matrix(c(1,cor,cor,1),nrow=2))
     # Transform into [0,1] space
     B <- 1/(1+exp(-L))
@@ -119,32 +128,66 @@ binomial.effect.on.correlation <- function(cor, depth, n.samples=1e4) {
 
 
 # get an approximate idea of correlation between training hSNPs
-# by only looking at adjacent hSNPs. d is the distance between
-# them and (phaf, phaf2) are the allele frequencies of hSNP i
+# by only looking at adjacent hSNPs. dist is the distance between
+# them and (phased.af.x, phased.af.y) are the allele frequencies of hSNP i
 # and its upstream neighbor hSNP i+1.
+#
+# bin.breaks - hSNP pairs are grouped into bins based on the distance
+#       between the two hSNPs to compute the observed AF correlation.
+#       bin.breaks defines the distance break points for this binning. 
+#       CAUTION: this function can fail if bin.breaks creates very
+#       small bins (in which there are few or no hSNP pairs).
 approx.abmodel.covariance <- function(object, bin.breaks=10^(0:5)) {
-    zz <- object@gatk[training.site==TRUE & muttype=='snv',
-        .(chr=chr, phased.dp=phased.hap1 + phased.hap2, d=c(diff(pos),0), phaf=phased.hap1/(phased.hap1+phased.hap2))][, phafd:=c(diff(phaf),0)][, phaf2 := phaf+phafd]
+    # Create a much smaller data.table (~50 Mb for humans) so copying won't be problematic
+    tiny.gatk <- object@gatk[training.site == TRUE & muttype == 'snv', .(chr, pos, phased.dp=phased.hap1 + phased.hap2, phased.af=phased.hap1/(phased.hap1 + phased.hap2))]
+    setkey(tiny.gatk, chr)   # make chr==this.chr filters fast
 
     ret <- rbindlist(lapply(object@gatk[,chr[1],by=chr]$chr, function(this.chr) {
-        z <- zz[chr == this.chr & d >= 0]
+        # "Join" (just put side-by-side) tiny.gatk[1:n-1,] and tiny.gatk[2:n,]
+        z <- tiny.gatk[chr == this.chr]
+        z <- cbind(z[-nrow(z), .(chr.x=chr, pos.x=pos, phased.dp.x=phased.dp, phased.af.x=phased.af)],
+                   z[-1,       .(chr.y=chr, pos.y=pos, phased.dp.y=phased.dp, phased.af.y=phased.af)])
+        z[, dist := pos.y - pos.x]
 
         # bin the adjacent hSNPs by the distance between them
-        z[d < 1e5, cut := cut(d, breaks=bin.breaks, ordered_result=T)]
+        z[, bin := cut(dist, breaks=bin.breaks, ordered_result=T)]
+        z[, bin.min := bin.breaks[as.integer(bin)]]
+        z[, bin.max := bin.breaks[as.integer(bin)+1]]
     
-        # make depth integer for easier indexing into inverse functions
-        z[!is.na(cut), .(chr=chr[1],
-                         observed.cor=cor(phaf,phaf2,use='complete.obs'),
-                         mean.dp=as.integer(mean(phased.dp))), by=cut][order(cut)][, max.d := bin.breaks[-1]]
+        # use=na.or.complete is identical to use=complete.obs, except if there
+        # are no observations (like on a female chrY), NA is returned instead
+        # of throwing an error.
+        ret <- z[!is.na(bin), .(chr=this.chr,
+                         n.pairs=nrow(.SD),       # how many hSNP pairs in total?
+                         # how many hSNP pairs have non-NA AFs?
+                         n.complete.pairs=sum(!is.na(phased.af.x) & !is.na(phased.af.y)), 
+                         bin.min=bin.min[1],      # bin.min/max just correspond to bin.breaks
+                         bin.max=bin.max[1],
+                         mean.dist=mean(dist),
+                         max.dist=max(dist),
+                         observed.cor=cor(phased.af.x, phased.af.y, use='na.or.complete'),
+                         # mean.dp is used to infer the latent correlation after binomial
+                         # sampling error.  a proper model would account for the distinct
+                         # depths at each of the hSNP locations, but since this function
+                         # only serves as a diagnostic, we use a less correct (but still
+                         # useful) model that only considers depth of the first hSNP in
+                         # each pair.
+                         mean.dp=as.integer(mean(phased.dp.x))), by=bin][order(bin)]
+
+        # pmin/pmax: avoid cor=1 or -1 because the binomial sampling correction can fail
+        # mask correlation calculations (with NA) when only 1 or 2 observations exist.
+        ret[, observed.cor := pmax(-0.99, pmin(0.99, ifelse(n.complete.pairs < 3, NA, observed.cor)))]
     }))
 
     # None of the below changes from chromosome to chromomsome
     # get a rough inverse function of (observed correlation, dp) -> (underlying correlation, dp)
     all.dps <- unique(as.integer(ret$mean.dp))
     inverse.fns.by.depth <- setNames(lapply(all.dps, function(depth) {
+        if (depth == 0)
+            return(function(x) NA)
         # use a linear interpolation on the approximate relationship between
         # sampling correlation (on the latent variable) and observed correlation (after binomial sampling)
-        sampling.cor <- seq(0.01, 1, length.out=50)
+        sampling.cor <- seq(-0.99, 0.99, length.out=50)
         interp.points <- sapply(sampling.cor, binomial.effect.on.correlation, depth=depth)
         # rule=2: when observations are outside of the observed range, returns the boundary value
         approxfun(x=interp.points, y=sampling.cor, rule=2)  # returns a function
