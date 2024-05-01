@@ -873,9 +873,11 @@ setMethod("call.mutations", "SCAN2", function(object, target.fdr=0.01, quiet=FAL
             (cigar.id.test & cigar.hs.test & dp.test & abc.test & min.sc.alt.test) &
             lysis.fdr <= target.fdr & mda.fdr <= target.fdr]
 
-    # Rescue hasn't happened (or if it has, reset it), so introduce the rescue column
-    # for consistency.
-    object@gatk[, c('rweight', 'rescue.fdr', 'rescue') := list(as.numeric(NA), as.numeric(NA), as.logical(FALSE))]
+    # Rescue hasn't happened (or if it has, reset it), so introduce the rescue columns
+    # to prevent a data.table issue where columns cannot be added to data.tables
+    # load()ed from file without a full copy.
+    object@gatk[, c('rescue.candidate', 'rweight', 'rescue.fdr', 'rescue') :=
+        list(as.logical(FALSE), as.numeric(NA), as.numeric(NA), as.logical(FALSE))]
 
 
     # NAs are especially present in legacy output where not all sites

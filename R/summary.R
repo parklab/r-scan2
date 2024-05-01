@@ -334,15 +334,14 @@ filter.gatk.and.nearby.hets <- function(object, flank=2500, quiet=FALSE) {
     compress.dt(ret)
 }
 
-# Maybe one day tabulate snvs, indels, training sites, etc. For now pretty useless.
 summarize.gatk <- function(object, quiet=FALSE) {
-    ret <- list(gatk.info=NULL, gatk.calls=NULL, gatk=NULL)
+    ret <- list(gatk.info=NULL, gatk.calls=NULL, filtered.gatk=NULL, shared.gatk=NULL)
     if (!quiet) cat("Summarizing raw GATK read count table...\n")
     if (is.null(object@gatk)) {
         list(nrows=NULL)
     } else {
         ret$gatk.info <- list(nrows=nrow(object@gatk))
-        ret$gatk.calls <- object@gatk[pass == TRUE | rescue == TRUE]
+        ret$gatk.calls <- object@gatk[pass == TRUE | rescue == TRUE | rescue.candidate == TRUE]
         ret$filtered.gatk <- filter.gatk.and.nearby.hets(object, quiet=quiet)
         ret$shared.gatk <- filter.gatk.potentially.shared(object, quiet=quiet)
     }

@@ -106,6 +106,9 @@ mutsig.rescue.one <- function(object, artifact.sig, true.sig,
 {
     mt <- match.arg(muttype)
 
+    if (is(object, 'summary.SCAN2'))
+        stop('mutsig rescue on summary objects currently disabled')
+
     # All work in this function will be done on a copy of the object with a much, much
     # smaller GATK table.  Results will be joined back at the end.
     tmpgatk <- reduce.table(data(object), target.fdr=target.fdr)
@@ -138,14 +141,17 @@ mutsig.rescue.one <- function(object, artifact.sig, true.sig,
     if (is(object, 'SCAN2')) {
         # Apply blank entries to the whole table since only the part joining
         # to `tmpgatk` will be updated below.
-        object@gatk[ , c('rweight', 'rescue.fdr', 'rescue') := list(as.numeric(NA), as.numeric(NA), as.logical(FALSE))]
+        object@gatk[ , c('rescue.candidate', 'rweight', 'rescue.fdr', 'rescue') :=
+            list(as.logical(FALSE), as.numeric(NA), as.numeric(NA), as.logical(FALSE))]
         object@gatk[tmpgatk, on=.(chr, pos, refnt, altnt),
-            c('rweight', 'rescue.fdr', 'rescue') := list(i.rweight, i.rescue.fdr, i.rescue)]
+            c('rescue.candidate', 'rweight', 'rescue.fdr', 'rescue') :=
+                list(TRUE, i.rweight, i.rescue.fdr, i.rescue)]
     } else if (is(object, 'summary.SCAN2')) {
         gs <- summarize.gatk(object, quiet=FALSE)
         object@gatk.info <- gs$gatk.info
         object@gatk.calls <- gs$gatk.calls
         object@gatk <- gs$filtered.gatk
+        object@gatk.shared <- gs$shared.gatk
     } else {
         stop("`object' must be class=SCAN2 or summary.SCAN2")
     }
