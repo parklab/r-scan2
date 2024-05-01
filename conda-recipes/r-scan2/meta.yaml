@@ -1,6 +1,6 @@
 package:
   name: r-scan2
-  version: '1.2.11'
+  version: '1.2.13'
   githash: {{ GIT_FULL_HASH }}
 
 source:
