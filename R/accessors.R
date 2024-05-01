@@ -219,10 +219,12 @@ helper.ab.fits <- function(ab.params, single.cell, type=c('chromosome', 'mean'),
 # When type=shared, a larger data.table (a superset of type=filtered) with
 # fewer columns is returned.
 #
+# type=filtered is ignored for data(SCAN2). the whole @gatk table is returned.
+#
 # data() always adds an initial column with the sample's name()
 setGeneric("data", function(object, type=c('filtered', 'shared')) standardGeneric("data"))
 setMethod("data", "SCAN2", function(object, type=c('filtered', 'shared')) {
-    helper.data(object@gatk, single.cell=name(object))
+    helper.data(object@gatk, single.cell=name(object), type=type)
 })
 
 setMethod("data", "summary.SCAN2", function(object, type=c('filtered', 'shared')) {
@@ -313,6 +315,39 @@ setMethod("rescued", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'inde
 setMethod("rescued", "list", function(x, muttype=c('both', 'snv', 'indel'))
     passing(x, muttype=muttype, passtype='rescued')
 )
+
+# Return CANDIDATES for mutsig rescued calls.  The actual calls are included;
+# remove them by rescue=F.
+setGeneric("rescue.candidates", function(x, muttype=c('both', 'snv', 'indel')) standardGeneric("rescue.candidates"))
+setMethod("rescue.candidates", "SCAN2", function(x, muttype=c('both', 'snv', 'indel'))
+    helper.rescue.candidates(data(x), muttype=muttype)
+)
+setMethod("rescue.candidates", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'indel'))
+    helper.rescue.candidates(data.table(sample=name(x), x@gatk.calls), muttype=muttype)
+)
+setMethod("rescue.candidates", "list", function(x, muttype=c('both', 'snv', 'indel')) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 xs only')
+    }
+    rbindlist(lapply(x, function(object) {
+        tab <- rescue.candidates(object, muttype=muttype)
+        # the data table contains a column named after the single cell ID.  cannot
+        # leave this in or else data.table will complain about different column
+        # names between tables. (it is also useless)
+        tab[[name(object)]] <- NULL  
+        tab
+    }))
+})
+helper.rescue.candidates <- function(tab, muttype=c('both', 'snv', 'indel')) {
+    muttype <- match.arg(muttype)
+    if (muttype == 'both')
+        muttype <- c('snv', 'indel')
+    allowed.muttypes <- muttype
+
+    tab[muttype %in% allowed.muttypes & rescue.candidate == TRUE]
+}
+
 
 # Return any call (either VAF-based or mutsig-rescued). Just an alias for passing(., passtype=any)
 setGeneric("all.calls", function(x, muttype=c('both', 'snv', 'indel')) standardGeneric("all.calls"))
@@ -463,13 +498,7 @@ helper.ab.distn <- function(ab, single.cell, type=c('af', 'ab')) {
     type <- match.arg(type)
     ab <- ab$training.sites[[ifelse(type == 'ab', 'gp.mu', 'af')]]
 
-    # summaries are in table format: names(ret) are the values and ret are the freqs
-    ab.val <- as.numeric(names(ab))
-    if (type == 'ab') {
-        # map gp.mu -> ab
-        ab.val <- 1/(1+exp(-ab.val))
-    }
-    ret <- density(ab.val, from=0, to=1, weights=ab/sum(ab))[c('x','y')]
+    ret <- approxify.to.density(ab, from=0, to=1, map.fn=function(x) 1/(1+exp(-x)))
     ret <- cbind(ret$x, ret$y)
     colnames(ret) <- c(type, single.cell)
     ret
