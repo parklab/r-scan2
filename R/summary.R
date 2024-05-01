@@ -286,6 +286,16 @@ approxify <- function(x, n.digits=3) {
 unapproxify <- function(a) rep(as.numeric(names(a)), a)
 
 
+# smooth an approxify()ed 'atab'.  map.fn() allows he 
+approxify.to.density <- function(atab, from, to, map.fn=identity) {
+    # approxify produces a table: names(atab) are the values and ret are the freqs
+    freqs <- atab
+    vals <- map.fn(as.numeric(names(atab)))
+
+    density(vals, from=0, to=1, weights=freqs/sum(freqs))[c('x','y')]
+}
+
+
 # Retain all sites that show evidence of sharing across cells (tcells>1) and
 # are somatic candidates.  Resampled training sites act as a positive control
 # but do NOT need to be saved here since they are saved in the filtered gatk
