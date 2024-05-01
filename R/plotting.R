@@ -86,24 +86,30 @@ id83.cols <- col <- rep(c('#FBBD75', '#FC7F24', '#B0DB8E', '#3B9F36',
 #
 # show.types - show a legend of N>N mutation types
 # show.detailed.types - show trinucleotide contexts on x-axis
-# show.sample - if 'sample' is in colnames(x) or x is a SCAN2/summary.SCAN2
-#   object, print the sample name in the top left of the plot
-plot.sbs96 <- function(x, eps=0, fraction=FALSE, show.types=FALSE, show.detailed.types=FALSE, show.sample=TRUE, max.nrow=8, ...)
+#
+# We recommend using the 'title' parameter rather than 'main' to title the plot. This
+# allows a more compact display that is often desirable when examining many spectra. 
+# title - If title=NULL, try to identify a sample name via:
+#       a. if 'sample' is in colnames(x)
+#       b. x is a SCAN2/summary.SCAN2
+#   If found, print the sample name in the top left of the plot.
+#   If title is not NULL, print title in the top left of the plot.
+plot.sbs96 <- function(x, eps=0, fraction=FALSE, show.types=FALSE, show.detailed.types=FALSE, title=NULL, max.nrow=8, ...)
 {
     mutsig.data <- prehelper.plot.mutsig(x=x, eps=eps, fraction=fraction, factor.fn=sbs96)
 
     helper.plot.mutsig(spectrum=mutsig.data$spectrum, mode=mutsig.data$mode,
-        colors=sbs96.cols, cex.names=0.7, max.nrow=max.nrow,
-        show.types=show.types, show.detailed.types=show.detailed.types, show.sample=show.sample, ...)
+        colors=sbs96.cols, cex.names=0.7, max.nrow=max.nrow, title=title,
+        show.types=show.types, show.detailed.types=show.detailed.types, ...)
 }
 
-plot.id83 <- function(x, eps=0, fraction=FALSE, show.types=FALSE, show.detailed.types=FALSE, show.sample=TRUE, max.nrow=8, ...)
+plot.id83 <- function(x, eps=0, fraction=FALSE, show.types=FALSE, show.detailed.types=FALSE, title=NULL, max.nrow=8, ...)
 {
     mutsig.data <- prehelper.plot.mutsig(x=x, eps=eps, fraction=fraction, factor.fn=id83)
 
     helper.plot.mutsig(spectrum=mutsig.data$spectrum, mode=mutsig.data$mode,
-        colors=id83.cols, cex.names=0.7, max.nrow=max.nrow,
-        show.types=show.types, show.detailed.types=show.detailed.types, show.sample=show.sample, ...)
+        colors=id83.cols, cex.names=0.7, max.nrow=max.nrow, title=title,
+        show.types=show.types, show.detailed.types=show.detailed.types, ...)
 }
 
 # Handle all of the possible forms of x
@@ -160,7 +166,7 @@ prehelper.plot.mutsig <- function(x, factor.fn, eps=0, fraction=FALSE) {
     list(mode=mode, spectrum=spectrum)
 }
 
-helper.plot.mutsig <- function(spectrum, colors, ylim, mode=c('sbs96', 'id83'), cex.names=0.7, show.types=FALSE, show.detailed.types=FALSE, show.sample=TRUE, max.nrow=8, ...)
+helper.plot.mutsig <- function(spectrum, colors, ylim, mode=c('sbs96', 'id83'), cex.names=0.7, show.types=FALSE, show.detailed.types=FALSE, max.nrow=8, title=NULL, ...)
 {
     mode <- match.arg(mode)
 
@@ -185,14 +191,15 @@ helper.plot.mutsig <- function(spectrum, colors, ylim, mode=c('sbs96', 'id83'), 
 
     mar <- c(botlines,4,toplines,1/4)
     for (i in 1:ncol(spectrum)) {
+        sample.name <- colnames(spectrum)[i]   # colnames(spectrum) are lost due to [,i]
         helper.plot.mutsig.one(spectrum=spectrum[,i], mode=mode,
-            sample.name=colnames(spectrum)[i],   # colnames will be lost on [,i]
             col=colors, ylim=ylim, mar=mar,
-            show.types=show.types, show.detailed.types=show.detailed.types, show.sample=show.sample, ...)
+            title=ifelse(is.null(title), sample.name, title),
+            show.types=show.types, show.detailed.types=show.detailed.types, ...)
     }
 }
 
-helper.plot.mutsig.one <- function(spectrum, sample.name, colors, ylim, mar, mode=c('sbs96', 'id83'), cex.names=0.7, show.types=FALSE, show.detailed.types=FALSE, show.sample=TRUE, ...)
+helper.plot.mutsig.one <- function(spectrum, colors, ylim, mar, title=NULL, mode=c('sbs96', 'id83'), cex.names=0.7, show.types=FALSE, show.detailed.types=FALSE, ...)
 {
     mode <- match.arg(mode)
     oldpar <- par(mar=mar)
@@ -235,11 +242,9 @@ helper.plot.mutsig.one <- function(spectrum, sample.name, colors, ylim, mar, mod
         }
     }
 
-    if (show.sample & !is.null(sample.name)) {
-        if (nchar(sample.name) > 0) {
-            legend('topleft', legend=sample.name, box.col=NA, bg='white',
-                inset=c(0.01, 0), x.intersp=0, text.font=2)
-        }
+    if (!is.null(title) & nchar(title) > 0) {
+        legend('topleft', legend=title, box.col=NA, bg='white',
+            inset=c(0.01, 0), x.intersp=0, text.font=2)
     }
 
     par(oldpar)
@@ -1088,6 +1093,74 @@ helper.plot.mapd <- function(mapds, type=c('curve', 'canonical')) {
         barplot(mapds, las=3, ylab='MAPD', xlab='', cex.names=3/4)
         par(mar=oldpar)
     }
+}
+
+
+
+###############################################################################
+# Plot an overview of mutation signature rescue
+###############################################################################
+
+setGeneric('plot.mutsig.rescue', function(x, muttype=c('snv', 'indel')) standardGeneric('plot.mutsig.rescue'))
+setMethod('plot.mutsig.rescue', 'SCAN2', function(x, muttype=c('snv', 'indel')) {
+    muttype <- match.arg(muttype)
+    helper.plot.mutsig.rescue(x=x, mutsig.rescue=x@mutsig.rescue[[muttype]], muttype=muttype)
+})
+
+setMethod('plot.mutsig.rescue', 'summary.SCAN2', function(x, muttype=c('snv', 'indel')) {
+    muttype <- match.arg(muttype)
+    helper.plot.mutsig.rescue(x=x, mutsig.rescue=x@mutsig.rescue[[muttype]], muttype=muttype)
+})
+
+setMethod('plot.mutsig.rescue', 'list', function(x, muttype=c('snv', 'indel')) {
+    muttype <- match.arg(muttype)
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+
+    # Assumes the whole list comes from the same batch.  No perfect way
+    # to assert that.
+    helper.plot.mutsig.rescue(x, mutsig.rescue=x[[1]]@mutsig.rescue[[muttype]], muttype=muttype)
+})
+
+helper.plot.mutsig.rescue <- function(x, mutsig.rescue, muttype=c('snv', 'indel')) {
+    muttype <- match.arg(muttype)
+
+    if (muttype == 'snv')
+        plot.fn <- plot.sbs96
+    else
+        plot.fn <- plot.id83
+
+    p <- passing(x, muttype=muttype)
+    r <- rescued(x, muttype=muttype)
+    rc <- rescue.candidates(x, muttype=muttype)[rescue == FALSE]
+
+    a <- rbindlist(list(p, r, rc))
+    afm <- sapply(name(x), function(sample.name) approxify(a[sample == sample.name, af]))
+
+    # counts
+    d <- a[,.(n.pass=sum(pass), n.rescue=sum(rescue), n.rejected=sum(rescue.candidate & !rescue)),by=sample] 
+
+    layout(matrix(c(1:5,0,6,6,6),ncol=3))
+    oldpar <- par(oma=c(0,0,1.5,0))
+    plot.fn(p, title='VAF-based calls')
+    plot.fn(r, title='Signature rescued calls')
+    plot.fn(rc, title='Rejected signature-rescue candidates')
+    plot.fn(mutsig.rescue$true.sig, title='True spectrum (from data)')
+    # artifact.sig is not saved as class=table, but is in the correct order
+    plot.fn(t(t(mutsig.rescue$artifact.sig)), title='Artifact spectrum')
+
+    # #passing vs. #rescued and #rejected
+    #par(oldpar)
+    matplot(d$n.pass, d[,.(n.rescue,n.rejected)],
+        type='p', pch=20, bty='n',
+        xlab='#passing calls', ylab='#rescued or rejected')
+    abline(coef=0:1)
+    legend('topleft', legend=c('Rescued', 'Rejected'), pch=20, col=1:2, bty='n')
+
+    title <- ifelse(is(x, 'list') & length(x) > 1, paste(length(x), 'cells'), name(x)[1])
+    mtext(title, side=3, outer=TRUE)
 }
 
 
