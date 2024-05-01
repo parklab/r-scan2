@@ -17,6 +17,101 @@ setMethod("name", "list", function(x) {
 
 
 
+setGeneric("amp", function(x) standardGeneric("amp"))
+setMethod("amp", "SCAN2", function(x) {
+    setNames(x@amplification, name(x))
+})
+
+setMethod("amp", "summary.SCAN2", function(x) {
+    setNames(x@amplification, name(x))
+})
+
+setMethod("amp", "list", function(x) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    sapply(x, amp)
+})
+
+
+
+setGeneric("bulk", function(x) standardGeneric("bulk"))
+setMethod("bulk", "SCAN2", function(x) {
+    setNames(x@bulk, name(x))
+})
+
+setMethod("bulk", "summary.SCAN2", function(x) {
+    setNames(x@bulk, name(x))
+})
+
+setMethod("bulk", "list", function(x) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    sapply(x, bulk)
+})
+
+
+
+setGeneric("sex", function(x) standardGeneric("sex"))
+setMethod("sex", "SCAN2", function(x) {
+    setNames(x@sex, name(x))
+})
+
+setMethod("sex", "summary.SCAN2", function(x) {
+    setNames(x@sex, name(x))
+})
+
+setMethod("sex", "list", function(x) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    sapply(x, sex)
+})
+
+
+
+setGeneric("config", function(x) standardGeneric("config"))
+setMethod("config", "SCAN2", function(x) {
+    x@config
+})
+
+setMethod("config", "summary.SCAN2", function(x) {
+    x@config
+})
+
+setMethod("config", "list", function(x) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    setNames(lapply(x, config), name(x))
+})
+
+
+
+setGeneric("version", function(x) standardGeneric("version"))
+setMethod("version", "SCAN2", function(x) {
+    list(package.version=x@package.version, pipeline.version=x@pipeline.version)
+})
+
+setMethod("version", "summary.SCAN2", function(x) {
+    list(package.version=x@package.version, pipeline.version=x@pipeline.version)
+})
+
+setMethod("version", "list", function(x) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    setNames(lapply(x, version), name(x))
+})
+
+
+
 setGeneric("abmodel.cov", function(x, type=c('fit', 'neighbor', 'neighbor.corrected', 'all')) standardGeneric("abmodel.cov"))
 setMethod("abmodel.cov", "SCAN2", function(x, type=c('fit', 'neighbor', 'neighbor.corrected', 'all')) {
     helper.abmodel.cov(
