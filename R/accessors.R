@@ -252,36 +252,48 @@ helper.data <- function(tab, single.cell, type=c('filtered', 'shared')) {
 }
 
 
-# Return all passing mutation calls. Currently these only return VAF-based calls.
-setGeneric("passing", function(x, muttype=c('both', 'snv', 'indel')) standardGeneric("passing"))
-setMethod("passing", "SCAN2", function(x, muttype=c('both', 'snv', 'indel')) {
+# Return SCAN2 somatic mutation calls.  The default is to return VAF-based calls
+# (i.e., "first-pass" calls).  passtype=rescued returns ONLY rescued calls and
+# passtype=any returns both.  See the convenience wrappers rescued() and all.calls()
+setGeneric("passing", function(x, muttype=c('both', 'snv', 'indel'), passtype=c('vafbased', 'rescued', 'any')) standardGeneric("passing"))
+setMethod("passing", "SCAN2", function(x, muttype=c('both', 'snv', 'indel'), passtype=c('vafbased', 'rescued', 'any')) {
     mt <- match.arg(muttype)
     if (mt == 'both')
         mt <-c('snv', 'indel')
+    passtype <- match.arg(passtype)
 
-    data(x)[pass == TRUE & muttype %in% mt]
+    if (passtype == 'vafbased')
+        data(x)[pass == TRUE & muttype %in% mt]
+    else if (passtype == 'rescued')
+        data(x)[rescue == TRUE & muttype %in% mt]
+    else if (passtype == 'any')
+        data(x)[pass == TRUE | rescue == TRUE & muttype %in% mt]
 })
 
-setMethod("passing", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'indel')) {
-    # Summary objects have a special, uncompressed data.table with passing
+setMethod("passing", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'indel'), passtype=c('vafbased', 'rescued', 'any')) {
+    # Summary objects have a special, uncompressed data.table with all
     # calls that allows quick access without decompression.
     mt <- match.arg(muttype)
     if (mt == 'both')
         mt <-c('snv', 'indel')
+    passtype <- match.arg(passtype)
 
-    # Still need pass==T because this table also contains rescued calls (if
-    # rescue was performed).
-    data.table(sample=name(x), x@gatk.calls[pass == TRUE & muttype %in% mt])
+    if (passtype == 'vafbased')
+        data.table(sample=name(x), x@gatk.calls[pass == TRUE & muttype %in% mt])
+    else if (passtype == 'rescued')
+        data.table(sample=name(x), x@gatk.calls[rescue == TRUE & muttype %in% mt])
+    else if (passtype == 'any')
+        data.table(sample=name(x), x@gatk.calls[pass == TRUE | rescue == TRUE & muttype %in% mt])
 })
 
-setMethod("passing", "list", function(x, muttype=c('both', 'snv', 'indel')) {
+setMethod("passing", "list", function(x, muttype=c('both', 'snv', 'indel'), passtype=c('vafbased', 'rescued', 'any')) {
     classes <- sapply(x, class)
     if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
         stop('x must be a list of SCAN2 or summary.SCAN2 xs only')
     }
     
     rbindlist(lapply(x, function(x) {
-        tab <- passing(x, muttype=muttype)
+        tab <- passing(x, muttype=muttype, passtype=passtype)
         # the data table contains a column named after the single cell ID.  cannot
         # leave this in or else data.table will complain about different column
         # names between tables. (it is also useless)
@@ -289,6 +301,30 @@ setMethod("passing", "list", function(x, muttype=c('both', 'snv', 'indel')) {
         tab
     }))
 })
+
+# Return mutsig-rescued calls. Just an alias for passing(., passtype=rescued)
+setGeneric("rescued", function(x, muttype=c('both', 'snv', 'indel')) standardGeneric("rescued"))
+setMethod("rescued", "SCAN2", function(x, muttype=c('both', 'snv', 'indel'))
+    passing(x, muttype=muttype, passtype='rescued')
+)
+setMethod("rescued", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'indel'))
+    passing(x, muttype=muttype, passtype='rescued')
+)
+setMethod("rescued", "list", function(x, muttype=c('both', 'snv', 'indel'))
+    passing(x, muttype=muttype, passtype='rescued')
+)
+
+# Return any call (either VAF-based or mutsig-rescued). Just an alias for passing(., passtype=any)
+setGeneric("all.calls", function(x, muttype=c('both', 'snv', 'indel')) standardGeneric("all.calls"))
+setMethod("all.calls", "SCAN2", function(x, muttype=c('both', 'snv', 'indel'))
+    passing(x, muttype=muttype, passtype='any')
+)
+setMethod("all.calls", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'indel'))
+    passing(x, muttype=muttype, passtype='any')
+)
+setMethod("all.calls", "list", function(x, muttype=c('both', 'snv', 'indel'))
+    passing(x, muttype=muttype, passtype='any')
+)
 
 
 
