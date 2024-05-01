@@ -22,7 +22,7 @@ setMethod("abmodel.cov", "SCAN2", function(x, type=c('fit', 'neighbor', 'neighbo
     helper.abmodel.cov(
         single.cell=name(x),
         ab.params=ab.fits(x, type='mean'),
-        approx=approx.abmodel.covariance(x, bin.breaks=c(1, 10^seq(1,5,length.out=50))),
+        approx=approx.abmodel.covariance(x, bin.breaks=c(1, 10^seq(1,5,length.out=20))),
         type=type,
         sex.chroms=get.sex.chroms(x))
 })
@@ -49,7 +49,7 @@ setMethod("abmodel.cov", "list", function(x, type=c('fit', 'neighbor', 'neighbor
 })
 
 
-helper.abmodel.cov <- function(ab.params, approx, single.cell, at=10^seq(1,5,length.out=50), type=c('fit', 'neighbor', 'neighbor.corrected', 'all'), sex.chroms=c()) {
+helper.abmodel.cov <- function(ab.params, approx, single.cell, at=10^seq(1,5,length.out=20), type=c('fit', 'neighbor', 'neighbor.corrected', 'all'), sex.chroms=c()) {
     type <- match.arg(type)
     n <- as.data.frame(approx[!(chr %in% sex.chroms), mean(observed.cor, na.rm=TRUE), by=max.d])
     nc <- as.data.frame(approx[!(chr %in% sex.chroms), mean(corrected.cor, na.rm=TRUE), by=max.d])
