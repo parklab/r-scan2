@@ -23,6 +23,10 @@ setMethod("abmodel.cov", "SCAN2", function(x, type=c('fit', 'neighbor', 'neighbo
         single.cell=name(x),
         ab.params=ab.fits(x, type='mean'),
         approx=approx.abmodel.covariance(x, bin.breaks=c(1, 10^seq(1,5,length.out=20))),
+        # ensure approx and fit are computed at same distance points. note the missing
+        # leading "1", which is only relevant for defining the left boundary of the first
+        # bin.
+        at=10^seq(1,5,length.out=20),  
         type=type,
         sex.chroms=get.sex.chroms(x))
 })
@@ -51,19 +55,20 @@ setMethod("abmodel.cov", "list", function(x, type=c('fit', 'neighbor', 'neighbor
 
 helper.abmodel.cov <- function(ab.params, approx, single.cell, at=10^seq(1,5,length.out=20), type=c('fit', 'neighbor', 'neighbor.corrected', 'all'), sex.chroms=c()) {
     type <- match.arg(type)
-    n <- as.data.frame(approx[!(chr %in% sex.chroms), mean(observed.cor, na.rm=TRUE), by=bin.max])
-    nc <- as.data.frame(approx[!(chr %in% sex.chroms), mean(corrected.cor, na.rm=TRUE), by=bin.max])
-    f <- data.frame(d=at, cov=K.func(x=at, y=0, a=ab.params$a, b=ab.params$b, c=ab.params$c, d=ab.params$d)/(exp(ab.params$a)+exp(ab.params$c)))
-    if (type == 'neighbor') {
-        ret <- n
-    } else if (type == 'neighbor.corrected') {
-        ret <- nc
-    } else if (type == 'fit') {
-        ret <- f
-    } else if (type == 'all') {
-        ret <- cbind(f, n[,2], nc[,2])
-        colnames(ret) <- c('dist', 'fit', 'neighbor', 'neighbor.corrected')
+    ret <- data.frame(dist=at)
+    if (type == 'neighbor' | type == 'all') {
+        n <- as.data.frame(approx[!(chr %in% sex.chroms), mean(observed.cor, na.rm=TRUE), by=bin.max])
+        ret <- cbind(ret, neighbor=n[,2])
     }
+    if (type == 'neighbor.corrected' | type == 'all') {
+        nc <- as.data.frame(approx[!(chr %in% sex.chroms), mean(corrected.cor, na.rm=TRUE), by=bin.max])
+        ret <- cbind(ret, neighbor.corrected=nc[,2])
+    }
+    if (type == 'fit' | type == 'all') {
+        f <- data.frame(d=at, cov=K.func(x=at, y=0, a=ab.params$a, b=ab.params$b, c=ab.params$c, d=ab.params$d)/(exp(ab.params$a)+exp(ab.params$c)))
+        ret <- cbind(ret, fit=f[,2])
+    }
+
     if (type != 'all')
         setNames(ret, c('dist', single.cell))
     else
