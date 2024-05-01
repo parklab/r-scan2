@@ -370,7 +370,7 @@ summarize.training.data <- function(object, quiet=FALSE) {
         ret$hap.nrows[per.hap$phased.gt] <- per.hap$N
         ret$nrows <- object@gatk[training.site==TRUE & muttype=='snv', length(muttype)]
         ret$neighbor.cov.approx <- approx.abmodel.covariance(object, bin.breaks=10^(0:5))
-        ret$neighbor.cov.approx.full <- approx.abmodel.covariance(object, bin.breaks=c(1, 10^seq(1,5,length.out=50)))
+        ret$neighbor.cov.approx.full <- approx.abmodel.covariance(object, bin.breaks=c(1, 10^seq(1,5,length.out=20)))
         if ('resampled.training.site' %in% colnames(object@gatk)) {
             ret$resampled$hsnps <-
                 object@gatk[resampled.training.site == TRUE & muttype == 'snv', length(muttype)]
