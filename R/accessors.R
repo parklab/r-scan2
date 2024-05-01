@@ -51,8 +51,8 @@ setMethod("abmodel.cov", "list", function(x, type=c('fit', 'neighbor', 'neighbor
 
 helper.abmodel.cov <- function(ab.params, approx, single.cell, at=10^seq(1,5,length.out=20), type=c('fit', 'neighbor', 'neighbor.corrected', 'all'), sex.chroms=c()) {
     type <- match.arg(type)
-    n <- as.data.frame(approx[!(chr %in% sex.chroms), mean(observed.cor, na.rm=TRUE), by=max.d])
-    nc <- as.data.frame(approx[!(chr %in% sex.chroms), mean(corrected.cor, na.rm=TRUE), by=max.d])
+    n <- as.data.frame(approx[!(chr %in% sex.chroms), mean(observed.cor, na.rm=TRUE), by=bin.max])
+    nc <- as.data.frame(approx[!(chr %in% sex.chroms), mean(corrected.cor, na.rm=TRUE), by=bin.max])
     f <- data.frame(d=at, cov=K.func(x=at, y=0, a=ab.params$a, b=ab.params$b, c=ab.params$c, d=ab.params$d)/(exp(ab.params$a)+exp(ab.params$c)))
     if (type == 'neighbor') {
         ret <- n
