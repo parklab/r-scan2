@@ -102,7 +102,7 @@ make.summary.scan2 <- function(object, preserve.object=TRUE, quiet=FALSE) {
         # spatial.sensitivity$data and binned.counts) to save memory before
         # multithreading.
         call.mutations.and.mutburden=summarize.call.mutations.and.mutburden(object, preserve.object=preserve.object, quiet=quiet),
-        mutsig.rescue=object@mutsig.rescue
+        mutsig.rescue=summarize.mutsig.rescue(object, quiet=quiet)
     )
 }
 
@@ -519,6 +519,12 @@ summarize.depth.profile <- function(object, quiet=FALSE) {
     ret
 }
 
+summarize.mutsig.rescue <- function(object, quiet=FALSE) {
+    if (!quiet) cat("Summarizing mutation signature-based rescue..\n")
+    # Just return the whole thing, even if NULL
+    object@mutsig.rescue
+}
+
 
 # Summarize the called mutations and various metrics concerning total mutation
 # burden.
@@ -671,22 +677,3 @@ summarize.spatial.sensitivity <- function(object, quiet=FALSE) {
     }
     ret
 }
-
-
-#setGeneric("show.mutsig.rescue", function(object) standardGeneric("show.mutsig.rescue"))
-#setMethod("show.mutsig.rescue", "SCAN2", function(object) {
-    #cat("#   Mutation rescue by signature: ")
-    #if (is.null(object@mutsig.rescue)) {
-        #cat("(not computed)\n")
-    #} else {
-        ## XXX: assumes SNV and indel use the same FDR.  currently correct, may break later
-        #cat(sprintf('rescue.target.fdr=%0.3f\n',
-            #object@mutsig.rescue[['snv']]$rescue.target.fdr))
-        #for (mt in c('snv', 'indel')) {
-            #msr <- object@mutsig.rescue[[mt]]
-            #cat(sprintf("#       %6s: %6d/%d candidates rescued,   %0.1f%% rel. error,   sig. weights:  %0.3f true,   %0.3f artifact\n",
-                #mt, nrow(object@gatk[muttype == mt & rescue]), msr$nmuts,
-                #100*msr$relative.error, msr$weight.true, msr$weight.artifact))
-        #}
-    #}
-#})
