@@ -599,6 +599,9 @@ summarize.call.mutations.and.mutburden <- function(object,
     if (!is.null(object@call.mutations)) {
         ret$suppress.shared.indels <- object@call.mutations$suppress.shared.indels
         ret$suppress.all.indels <- object@call.mutations$suppress.all.indels
+        # copy the original mutburden object since the parameters used are not guaranteed
+        # to be in the params.to.test grid
+        ret$mutburden <- object@mutburden
 
         # Record the user-selected target.fdr before analyzing other target.fdrs
         ret$selected.target.fdr <- object@call.mutations$target.fdr
