@@ -671,3 +671,63 @@ setMethod("binned.counts", "list", function(x, type=c('cnv', 'ratio.gcnorm', 'ra
     rownames(ret) <- rns
     ret
 })
+
+
+
+# just an accessor function, nothing computed here. see mutburden.R
+setGeneric("mutburden", function(x, muttype=c('both', 'snv', 'indel'))
+    standardGeneric("mutburden"))
+setMethod("mutburden", "SCAN2", function(x, muttype=c('both', 'snv', 'indel')) {
+    muttype <- match.arg(muttype)
+    if (muttype == 'both')
+        muttype <- c('snv', 'indel')
+
+    sapply(muttype, function(mt) {
+        # We use the middle 50% of the depth distribution to avoid biasing
+        # the mutation burden by sensitivity differences in very low or very high
+        # depth regions. Row 2 corresponds to the middle 50%; row 1 is the bottom
+        # 25% and row 3 is the top 25%.
+        helper.mutburden(tab.one.row=x@mutburden[[mt]]$autosomal[2,,drop=FALSE],
+            suppress=x@call.mutations[c('suppress.shared.indels', 'suppress.all.indels')],
+            muttype=mt)
+    })
+})
+
+setMethod("mutburden", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'indel')) {
+    muttype <- match.arg(muttype)
+    if (muttype == 'both')
+        muttype <- c('snv', 'indel')
+
+    mb <- x@call.mutations.and.mutburden$mutburden
+    sapply(muttype, function(mt) {
+        helper.mutburden(tab.one.row=mb[[mt]]$autosomal[2,,drop=FALSE],
+            suppress=x@call.mutations.and.mutburden$mutburden[c('suppress.shared.indels', 'suppress.all.indels')],
+            muttype=mt)
+    })
+})
+
+setMethod("mutburden", "list", function(x) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    
+    ret <- do.call(rbind, lapply(x, mutburden))
+    rownames(ret) <- name(x)
+    ret
+})
+
+helper.mutburden <- function(tab.one.row, suppress, muttype) {
+    ret <- tab.one.row$burden
+
+    if (tab.one.row$unsupported.filters) {
+        warning(paste('unsupported static.filter.params were used, invalidating mutburden estimation:',
+            tab.one.row$reason))
+        ret <- NA
+    }
+    if (muttype == 'indel' & (suppress$suppress.all.indels | suppress$suppress.shared.indels)) {
+        warning("indel mutation burden estimates ARE NOT VALID (cross-sample panel insufficiency)!")
+        ret <- NA
+    }
+    ret
+}
