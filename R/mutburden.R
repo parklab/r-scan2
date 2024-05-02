@@ -183,33 +183,3 @@ compute.mutburden.helper <- function(germline, somatic, sfp, dptab, copy.number,
     ret$reason <- reason
     ret
 }
-
-
-# just an accessor function, nothing computed here
-setGeneric("mutburden", function(object, muttype=c('all', 'snv', 'indel'))
-    standardGeneric("mutburden"))
-setMethod("mutburden", "SCAN2", function(object, muttype=c('all', 'snv', 'indel')) {
-    check.slots(object, 'mutburden')
-
-    muttype <- match.arg(muttype)
-    if (muttype == 'all')
-        muttype <- c('snv', 'indel')
-
-    # We use the middle 50% of the depth distribution to avoid biasing
-    # the mutation burden by sensitivity differences in very low or very high
-    # depth regions. Row 2 corresponds to the middle 50%; row 1 is the bottom
-    # 25% and row 3 is the top 25%.
-    sapply(muttype, function(mt) {
-        ret <- object@mutburden[[mt]][2,]$burden
-
-        if (object@mutburden[[mt]]$unsupported.filters[2]) {
-            warning('unsupported static.filter.params were used, invalidating mutburden estimation (this is currently true for allowing mutation supporting reads in bulk)')
-            ret <- NA
-        }
-        if (mt == 'indel' & (object@call.mutations$suppress.all.indels | object@call.mutations$suppress.shared.indels)) {
-            warning("indel mutation burden estimates ARE NOT VALID (cross-sample panel insufficiency)!")
-            ret <- NA
-        }
-        ret
-    })
-})
