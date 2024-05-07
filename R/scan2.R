@@ -152,7 +152,15 @@ parse.static.filter.params <- function(config) {
             min.bulk.dp=config[[paste0(mt, '_min_bulk_dp')]],
             exclude.dbsnp=config[[paste0(mt, '_exclude_dbsnp')]],
             cg.id.q=config[[paste0(mt, '_cigar_id_score_quantile_cutoff')]],
-            cg.hs.q=config[[paste0(mt, '_cigar_hs_score_quantile_cutoff')]]
+            cg.hs.q=config[[paste0(mt, '_cigar_hs_score_quantile_cutoff')]],
+            # Some cross-sample panel parameters that are currently not configurable
+            # via the usual process. For now, use update.static.filter.params() to change.
+            panel.use=ifelse(mt == 'snv', FALSE, TRUE),    # apply the panel or not? 
+            # IMPORTANT!! allow.missing was historically FALSE.  It is only recommended
+            # for very large panels.
+            panel.allow.missing=TRUE,                   # if a site is missing, does it PASS?
+            panel.max.unique.donors=1,
+            panel.max.out=2
         )
     }), c('snv', 'indel'))
 }
@@ -724,35 +732,10 @@ setMethod("compute.static.filters", "SCAN2", function(object, mode=c('new', 'leg
     for (mt in c('snv', 'indel')) {
         sfp <- object@static.filter.params[[mt]]
 
-        #idq <- c(snv=object@excess.cigar.scores$snv$id.score.q,
-                 #indel=object@excess.cigar.scores$indel$id.score.q)
-        #hsq <- c(snv=object@excess.cigar.scores$snv$hs.score.q,
-                 #indel=object@excess.cigar.scores$indel$hs.score.q)
-        #max.bulk.alt <- c(snv=sfp$snv$max.bulk.alt, indel=sfp$indel$max.bulk.alt)
-        #max.bulk.af <- c(snv=sfp$snv$max.bulk.af, indel=sfp$indel$max.bulk.af)
-        #max.bulk.binom.prob <- c(snv=sfp$snv$max.bulk.binom.prob, indel=sfp$indel$max.bulk.binom.prob)
-        #min.sc.dp <- c(snv=sfp$snv$min.sc.dp, indel=sfp$indel$min.sc.dp)
-        #min.sc.alt <- c(snv=sfp$snv$min.sc.alt, indel=sfp$indel$min.sc.alt)
-        #min.bulk.dp <- c(snv=sfp$snv$min.bulk.dp, indel=sfp$indel$min.bulk.dp)
-        #min.bulk.alt <- c(snv=sfp$snv$min.bulk.alt, indel=sfp$indel$min.bulk.alt)
-        #exclude.dbsnp <- c(snv=sfp$snv$exclude.dbsnp, indel=sfp$snv$exclude.dbsnp)
-
-        #set(object@gatk, i=NULL, value=(object@gatk$id.score >= idq[object@gatk$muttype]), j="cigar.id.test")
         object@gatk[muttype == mt, c("cigar.id.test", "cigar.hs.test",
             "lowmq.test", "dp.test", "abc.test", "min.sc.alt.test", 
             "max.bulk.alt.test", "max.bulk.af.test", "max.bulk.binom.prob.test", 
             "dbsnp.test", "csf.test") :=
-            #list(id.score >= idq[mt],
-                #hs.score >= hsq[mt],
-                #is.na(balt.lowmq) | balt.lowmq <= max.bulk.alt[mt], 
-                #dp >= min.sc.dp[mt] & bulk.dp >= min.bulk.dp[mt], 
-                #abc.pv > 0.05,
-                #scalt >= min.sc.alt[mt],
-                #balt <= max.bulk.alt[mt], 
-                #is.na(max.bulk.af[mt]) | bulk.af <= max.bulk.af[mt], 
-                #is.na(max.bulk.binom.prob[mt]) | bulk.binom.prob <= max.bulk.binom.prob[mt],
-                #!exclude.dbsnp | dbsnp == ".",
-                #muttype == "snv" | unique.donors <= 1 | max.out <= 2)]
             list(id.score >= object@excess.cigar.scores[[mt]]$id.score.q,
                 hs.score >= object@excess.cigar.scores[[mt]]$hs.score.q,
                 is.na(balt.lowmq) | balt.lowmq <= sfp$max.bulk.alt,
@@ -763,13 +746,13 @@ setMethod("compute.static.filters", "SCAN2", function(object, mode=c('new', 'leg
                 is.na(sfp$max.bulk.af) | bulk.af <= sfp$max.bulk.af,
                 is.na(sfp$max.bulk.binom.prob) | bulk.binom.prob <= sfp$max.bulk.binom.prob,
                 !sfp$exclude.dbsnp | dbsnp == '.',
-                muttype == 'snv' | unique.donors <= 1 | max.out <= 2)]
+                # is.na(unique.donors) - doesn't matter which field we pick from the
+                # panel, if the site is missing all should be NA
+                !sfp$panel.use | (is.na(unique.donors) & sfp$panel.allow.missing) | unique.donors <= sfp$panel.max.unique.donors | max.out <= sfp$panel.max.out)]
 
         if (mode == 'legacy') {
             object@gatk[muttype == mt, c('cigar.id.test', 'cigar.hs.test') := 
                 list(id.score > idq[muttype], hs.score > hsq[muttype])]
-                    #list(id.score > object@excess.cigar.scores[[mt]]$id.score.q,
-                         #hs.score > object@excess.cigar.scores[[mt]]$hs.score.q)]
         }
 
     }
