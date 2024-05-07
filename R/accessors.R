@@ -702,18 +702,18 @@ setMethod("mutburden", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'in
     mb <- x@call.mutations.and.mutburden$mutburden
     sapply(muttype, function(mt) {
         helper.mutburden(tab.one.row=mb[[mt]]$autosomal[2,,drop=FALSE],
-            suppress=x@call.mutations.and.mutburden$mutburden[c('suppress.shared.indels', 'suppress.all.indels')],
+            suppress=x@call.mutations.and.mutburden[c('suppress.shared.indels', 'suppress.all.indels')],
             muttype=mt)
     })
 })
 
-setMethod("mutburden", "list", function(x) {
+setMethod("mutburden", "list", function(x, muttype=c('both', 'snv', 'indel')) {
     classes <- sapply(x, class)
     if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
         stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
     }
     
-    ret <- do.call(rbind, lapply(x, mutburden))
+    ret <- do.call(rbind, lapply(x, mutburden, muttype=muttype))
     rownames(ret) <- name(x)
     ret
 })
