@@ -221,20 +221,23 @@ helper.ab.fits <- function(ab.params, single.cell, type=c('chromosome', 'mean'),
 #
 # type=filtered is ignored for data(SCAN2). the whole @gatk table is returned.
 #
-# data() always adds an initial column with the sample's name()
-setGeneric("data", function(object, type=c('filtered', 'shared')) standardGeneric("data"))
-setMethod("data", "SCAN2", function(object, type=c('filtered', 'shared')) {
-    helper.data(object@gatk, single.cell=name(object), type=type)
+# add.sample.column - adds an initial column with name(x).  it can be useful
+#       to disable this for internal purposes where adding the extra column to
+#       the entire table is very slow, but adding it later is fast due to post-
+#       data() filtering (e.g., in passing())
+setGeneric("data", function(object, type=c('filtered', 'shared'), add.sample.column=TRUE) standardGeneric("data"))
+setMethod("data", "SCAN2", function(object, type=c('filtered', 'shared'), add.sample.column=TRUE) {
+    helper.data(object@gatk, single.cell=name(object), type=type, add.sample.column=add.sample.column)
 })
 
-setMethod("data", "summary.SCAN2", function(object, type=c('filtered', 'shared')) {
+setMethod("data", "summary.SCAN2", function(object, type=c('filtered', 'shared'), add.sample.column=TRUE) {
     type <- match.arg(type)
 
     ret <- helper.data(decompress.dt(object@gatk), single.cell=name(object), type=type)
     if (type == 'shared') {
         ordered.chroms <- ret[!duplicated(chr),chr]
         ret <- rbind(ret,
-            helper.data(decompress.dt(object@gatk.shared), single.cell=name(object), type=type))
+            helper.data(decompress.dt(object@gatk.shared), single.cell=name(object), type=type), add.sample.column=add.sample.column)
         # remove duplicate rows and sort table
         ret <- ret[!duplicated(paste(chr, pos, refnt, altnt))]
         ret[, chr := factor(chr, levels=ordered.chroms, ordered=TRUE)]
@@ -244,10 +247,13 @@ setMethod("data", "summary.SCAN2", function(object, type=c('filtered', 'shared')
     ret
 })
 
-helper.data <- function(tab, single.cell, type=c('filtered', 'shared')) {
+helper.data <- function(tab, single.cell, type=c('filtered', 'shared'), add.sample.column=TRUE) {
     type <- match.arg(type)
     if (type == 'filtered') {
-        data.table(sample=single.cell, tab)
+        if (add.sample.column)
+            data.table(sample=single.cell, tab)
+        else
+            tab
     } else if (type == 'shared') {
         tab[, .(sample=single.cell, chr, pos, refnt, altnt, muttype, mutsig, af, scalt, dp, abc.pv, balt, bulk.dp, resampled.training.site, pass, rescue, training.pass)]
     }
@@ -264,12 +270,28 @@ setMethod("passing", "SCAN2", function(x, muttype=c('both', 'snv', 'indel'), pas
         mt <-c('snv', 'indel')
     passtype <- match.arg(passtype)
 
+    # Don't add the sample column to the ENTIRE @gatk table in data(), instead
+    # add it after filtering down to only pass=TRUE sites.
     if (passtype == 'vafbased')
-        data(x)[pass == TRUE & muttype %in% mt]
+        ret <- data(x, add.sample.column=FALSE)[pass == TRUE & muttype %in% mt]
     else if (passtype == 'rescued')
-        data(x)[rescue == TRUE & muttype %in% mt]
+        ret <- data(x, add.sample.column=FALSE)[rescue == TRUE & muttype %in% mt]
     else if (passtype == 'any')
-        data(x)[pass == TRUE | rescue == TRUE & muttype %in% mt]
+        ret <- data(x, add.sample.column=FALSE)[pass == TRUE | rescue == TRUE & muttype %in% mt]
+    
+    zero.rows <- nrow(ret) == 0
+
+    # Add the sample column
+    ret <- data.table(sample=name(x), ret)
+
+    # However, if ret was a 0-row table, the above line just made a 1-row table
+    # with all NA values filled in except for sample.  But we still want to run
+    # the above sample=name(x) line because the empty table format should match
+    # the expected column format.
+    if (zero.rows)
+        ret[-1]
+    else
+        ret
 })
 
 setMethod("passing", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'indel'), passtype=c('vafbased', 'rescued', 'any')) {
@@ -281,11 +303,19 @@ setMethod("passing", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'inde
     passtype <- match.arg(passtype)
 
     if (passtype == 'vafbased')
-        data.table(sample=name(x), x@gatk.calls[pass == TRUE & muttype %in% mt])
+        ret <- x@gatk.calls[pass == TRUE & muttype %in% mt]
     else if (passtype == 'rescued')
-        data.table(sample=name(x), x@gatk.calls[rescue == TRUE & muttype %in% mt])
+        ret <- x@gatk.calls[rescue == TRUE & muttype %in% mt]
     else if (passtype == 'any')
-        data.table(sample=name(x), x@gatk.calls[pass == TRUE | rescue == TRUE & muttype %in% mt])
+        ret <- x@gatk.calls[pass == TRUE | rescue == TRUE & muttype %in% mt]
+
+    # see data(SCAN2) above for why this is done
+    zero.rows <- nrow(ret) == 0
+    ret <- data.table(sample=name(x), ret)
+    if (zero.rows)
+        ret[-1]
+    else
+        ret
 })
 
 setMethod("passing", "list", function(x, muttype=c('both', 'snv', 'indel'), passtype=c('vafbased', 'rescued', 'any')) {
@@ -319,9 +349,16 @@ setMethod("rescued", "list", function(x, muttype=c('both', 'snv', 'indel'))
 # Return CANDIDATES for mutsig rescued calls.  The actual calls are included;
 # remove them by rescue=F.
 setGeneric("rescue.candidates", function(x, muttype=c('both', 'snv', 'indel')) standardGeneric("rescue.candidates"))
-setMethod("rescue.candidates", "SCAN2", function(x, muttype=c('both', 'snv', 'indel'))
-    helper.rescue.candidates(data(x), muttype=muttype)
-)
+setMethod("rescue.candidates", "SCAN2", function(x, muttype=c('both', 'snv', 'indel')) {
+    ret <- helper.rescue.candidates(data(x, add.sample.column=FALSE), muttype=muttype)
+    # see data(SCAN2) above for why this is done
+    zero.rows <- nrow(ret) == 0
+    ret <- data.table(sample=name(x), ret)
+    if (zero.rows)
+        ret[-1]
+    else
+        ret
+})
 setMethod("rescue.candidates", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'indel'))
     helper.rescue.candidates(data.table(sample=name(x), x@gatk.calls), muttype=muttype)
 )
