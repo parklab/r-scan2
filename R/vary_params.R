@@ -50,14 +50,15 @@ setMethod("update.static.filter.params", "SCAN2", function(object, fdr.prior.mod
         sfp <- object@static.filter.params[[mt]]
         new <- new.params[[mt]]
         for (p in names(new)) {
+            new.val <- new[[p]]
+            old.val <- "MISSING"
             if (p %in% names(sfp)) {
-                if (new[p] != sfp[[p]]) {
-                    if (quiet < 2) cat(paste0("    (",mt,") updating ", p, ": ", sfp[[p]], " -> ", new[[p]], '\n'))
-                    object@static.filter.params[[mt]][[p]] <- new[[p]]
-                }
+                old.val <- sfp[[p]]
             } else {
-                if (quiet < 2) cat(paste0("    (",mt,") ignoring unrecognized parameter ", p, '\n'))
+                warning(paste0("(muttype=",mt,"): updating unrecognized parameter ", p, ", please ensure the parameter is spelled properly"))
             }
+            if (quiet < 2) cat(paste0("    (",mt,") updating ", p, ": ", old.val, " -> ", new.val, '\n'))
+            object@static.filter.params[[mt]][[p]] <- new.val
         }
     }
 
