@@ -535,16 +535,16 @@ plot.gp.confidence <- function(pos, gp.mu, gp.sd, df, sd.mult=2,
 # two sites.
 ###############################################################################
 
-setGeneric("plot.abmodel.cov", function(x) standardGeneric("plot.abmodel.cov"))
-setMethod("plot.abmodel.cov", "SCAN2", function(x) {
-    helper.plot.abmodel.cov(abmodel.cov(x, type='all'))
+setGeneric("plot.abmodel.cov", function(x, ...) standardGeneric("plot.abmodel.cov"))
+setMethod("plot.abmodel.cov", "SCAN2", function(x, ...) {
+    helper.plot.abmodel.cov(abmodel.cov(x, type='all'), ...)
 })
 
-setMethod("plot.abmodel.cov", "summary.SCAN2", function(x) {
-    helper.plot.abmodel.cov(abmodel.cov(x, type='all'))
+setMethod("plot.abmodel.cov", "summary.SCAN2", function(x, ...) {
+    helper.plot.abmodel.cov(abmodel.cov(x, type='all'), ...)
 })
 
-setMethod("plot.abmodel.cov", "list", function(x) {
+setMethod("plot.abmodel.cov", "list", function(x, ...) {
     classes <- sapply(x, class)
     if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
         stop('x must be a list of SCAN2 or summary.SCAN2 xs only')
@@ -554,13 +554,13 @@ setMethod("plot.abmodel.cov", "list", function(x) {
     m <- abmodel.cov(x, type='fit')
     matplot(m[,1], m[,-1],
         log='x', type='l', lwd=2, lty='solid', ylim=0:1,
-        xlab='Distance between hSNPs (log10)', ylab='Correlation between hSNP VAFs')
+        xlab='Distance between hSNPs (log10)', ylab='Correlation between hSNP VAFs', ...)
 })
 
-helper.plot.abmodel.cov <- function(approx) {
+helper.plot.abmodel.cov <- function(approx, ...) {
     plot(approx[,c('dist', 'neighbor.corrected')],
         log='x', type='b', pch=16, ylim=0:1,
-        xlab='Distance between hSNPs (log10)', ylab='Correlation between hSNP VAFs')
+        xlab='Distance between hSNPs (log10)', ylab='Correlation between hSNP VAFs', ...)
     lines(approx[,c('dist', 'neighbor')], type='b', pch=1, lty='dotted')
     lines(approx[,c('dist', 'fit')], col=2, lwd=2)
     legend('topright', pch=c(16,1,NA), lwd=c(1,1,2), col=c(1,1,2), lty=c('solid','dotted','solid'),
@@ -790,7 +790,11 @@ helper.plot.target.fdr.effect <- function(tab, selected.target.fdr) {
         ylab='SCAN2 VAF-based calls',
         main=paste('Number of VAF-based calls'))
     abline(v=selected.target.fdr, lty='dashed')
-    plot(tab[target.fdr < 1,.(target.fdr, (1-target.fdr)*n.pass / (n.resampled.training.pass/total.resampled))],
+    helper.plot.ideal.fdr.interpretation(tab=tab, selected.target.fdr=selected.target.fdr)
+}
+
+helper.plot.ideal.fdr.interpretation <- function(tab, selected.target.fdr) {
+    plot(tab[target.fdr < 1/2,.(target.fdr, (1-target.fdr)*n.pass / (n.resampled.training.pass/total.resampled))],
         type='b', pch=20, log='x',
         xlab='--target-fdr parameter (log-scale)',
         ylab='(1-FDR) * (Somatic mutations) / naive sensitivity',
@@ -842,25 +846,25 @@ helper.plot.mutburden <- function(tab) {
 # Plot GC content bias.
 ###############################################################################
 
-setGeneric('plot.gc.bias', function(x, separate=TRUE) standardGeneric('plot.gc.bias'))
-setMethod('plot.gc.bias', 'SCAN2', function(x, separate=TRUE) {
-    helper.plot.gc.bias(gc.bias(x), binned.counts=binned.counts(x, type='ratio', along='gc'), separate=separate)
+setGeneric('plot.gc.bias', function(x, separate=TRUE, ...) standardGeneric('plot.gc.bias'))
+setMethod('plot.gc.bias', 'SCAN2', function(x, separate=TRUE, ...) {
+    helper.plot.gc.bias(gc.bias(x), binned.counts=binned.counts(x, type='ratio', along='gc'), separate=separate, ...)
 })
 
-setMethod('plot.gc.bias', 'summary.SCAN2', function(x, separate=TRUE) {
-    helper.plot.gc.bias(gc.bias(x), binned.counts=binned.counts(x, type='ratio', along='gc'), separate=separate)
+setMethod('plot.gc.bias', 'summary.SCAN2', function(x, separate=TRUE, ...) {
+    helper.plot.gc.bias(gc.bias(x), binned.counts=binned.counts(x, type='ratio', along='gc'), separate=separate, ...)
 })
 
-setMethod('plot.gc.bias', 'list', function(x, separate=FALSE) {
+setMethod('plot.gc.bias', 'list', function(x, separate=FALSE, ...) {
     classes <- sapply(x, class)
     if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
         stop('x must be a list of SCAN2 or summary.SCAN2 xs only')
     }
 
-    helper.plot.gc.bias(gc.bias(x), binned.counts=binned.counts(x, type='ratio', along='gc'), separate=separate)
+    helper.plot.gc.bias(gc.bias(x), binned.counts=binned.counts(x, type='ratio', along='gc'), separate=separate, ...)
 })
 
-helper.plot.gc.bias <- function(gc.bias, binned.counts, separate=FALSE, max.nrow=3) {
+helper.plot.gc.bias <- function(gc.bias, binned.counts, separate=FALSE, max.nrow=3, ...) {
     if (separate & ncol(gc.bias) > 2) {
         # 0 prevents plotting in layout()
         lm <- matrix(rep(0, ncol(gc.bias)-1), nrow=min(ncol(gc.bias)-1, max.nrow))
@@ -879,7 +883,7 @@ helper.plot.gc.bias <- function(gc.bias, binned.counts, separate=FALSE, max.nrow
         for (i in 1:(ncol(gc.bias)-1)) {
             smoothScatter(x.axis, binned.counts[,i],
                 xlim=xlim, ylim=ylim,
-                xlab='GC content of bin', ylab='log2(read count ratio)')
+                xlab='GC content of bin', ylab='log2(read count ratio)', ...)
             lines(gc.bias[,c(1,i+1)], lwd=2, col=2)
             legend('topright', legend=colnames(gc.bias)[i+1])
         }
@@ -887,7 +891,7 @@ helper.plot.gc.bias <- function(gc.bias, binned.counts, separate=FALSE, max.nrow
     } else {
         matplot(gc.bias[,1], gc.bias[,-1],
             type='l', lwd=2, lty='solid',
-            xlab='GC content of bin', ylab='log2(read count ratio)')
+            xlab='GC content of bin', ylab='log2(read count ratio)', ...)
     }
 }
 
@@ -990,31 +994,31 @@ helper.plot.binned.counts <- function(binned.counts, sample.name, ylim, ylab, nr
 # Plot the allele balance distribution.
 ###############################################################################
 
-setGeneric('plot.ab.distn', function(x, type=c('af', 'ab')) standardGeneric('plot.ab.distn'))
-setMethod('plot.ab.distn', 'SCAN2', function(x, type=c('af', 'ab')) {
-    helper.plot.ab.distn(ab.distn(x, type))
+setGeneric('plot.ab.distn', function(x, type=c('af', 'ab'), ...) standardGeneric('plot.ab.distn'))
+setMethod('plot.ab.distn', 'SCAN2', function(x, type=c('af', 'ab'), ...) {
+    helper.plot.ab.distn(ab.distn(x, type), ...)
 })
 
-setMethod('plot.ab.distn', 'summary.SCAN2', function(x, type=c('af', 'ab')) {
-    helper.plot.ab.distn(ab.distn(x, type))
+setMethod('plot.ab.distn', 'summary.SCAN2', function(x, type=c('af', 'ab'), ...) {
+    helper.plot.ab.distn(ab.distn(x, type), ...)
 })
 
-setMethod('plot.ab.distn', 'list', function(x, type=c('af', 'ab')) {
+setMethod('plot.ab.distn', 'list', function(x, type=c('af', 'ab'), ...) {
     classes <- sapply(x, class)
     if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
         stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
     }
 
-    helper.plot.ab.distn(ab.distn(x, type=type))
+    helper.plot.ab.distn(ab.distn(x, type=type), ...)
 })
 
-helper.plot.ab.distn <- function(abmat) {
+helper.plot.ab.distn <- function(abmat, ...) {
     lwd <- ifelse(ncol(abmat) > 5, 1, 2)
     # The x values are the same across `ablist' because density() is applied
     # with n=512 and from=0, to=1, so exactly the same range is used.
     matplot(abmat[,1], abmat[,-1],
         bty='l', lwd=lwd, lty='solid', type='l',
-        xlab=toupper(colnames(abmat)[1]), ylab='Density')
+        xlab=toupper(colnames(abmat)[1]), ylab='Density', ...)
 }
 
 
@@ -1023,25 +1027,26 @@ helper.plot.ab.distn <- function(abmat) {
 # for a (single cell DP x bulk DP) plot.
 ###############################################################################
 
-setGeneric('plot.dp.distn', function(x) standardGeneric('plot.dp.distn'))
-setMethod('plot.dp.distn', 'SCAN2', function(x) {
-    helper.plot.dp.distn(dp.distn(x))
+setGeneric('plot.dp.distn', function(x, ...) standardGeneric('plot.dp.distn'))
+setMethod('plot.dp.distn', 'SCAN2', function(x, ...) {
+    helper.plot.dp.distn(dp.distn(x), ...)
 })
 
-setMethod('plot.dp.distn', 'summary.SCAN2', function(x) {
-    helper.plot.dp.distn(dp.distn(x))
+setMethod('plot.dp.distn', 'summary.SCAN2', function(x, ...) {
+    helper.plot.dp.distn(dp.distn(x), ...)
 })
 
-setMethod('plot.dp.distn', 'list', function(x) {
+setMethod('plot.dp.distn', 'list', function(x, ...) {
     classes <- sapply(x, class)
     if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
         stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
     }
 
-    helper.plot.dp.distn(dp.distn(x))
+
+    helper.plot.dp.distn(dp.distn(x), ...)
 })
 
-helper.plot.dp.distn <- function(dpmat) {
+helper.plot.dp.distn <- function(dpmat, ...) {
     lwd <- ifelse(ncol(dpmat) > 5, 1, 2)
     mean.dps <- apply(dpmat, 2, function(col) sum(0:(length(col)-1)*col)/sum(col))
     # Find the 75th percentile of depth for each sample. Use the max among those
@@ -1049,10 +1054,10 @@ helper.plot.dp.distn <- function(dpmat) {
     xlim <- c(0, max(qs))
     matplot(dpmat[-1,1], dpmat[-1,-1],
         bty='l', lwd=lwd, lty='solid', type='l',
-        xlab='Sequencing depth', ylab='Bases', xlim=xlim)
+        xlab='Sequencing depth', ylab='Bases', xlim=xlim, ...)
     means.xy <- cbind(round(mean.dps), dpmat[cbind(1+round(mean.dps), 1:ncol(dpmat))])[-1,,drop=FALSE]
     colnames(means.xy) <- c('x', 'y')
-    points(means.xy, pch=20, col=1:6)
+    points(means.xy, pch=20, ...) #col=1:6)
 }
 
 
@@ -1060,37 +1065,37 @@ helper.plot.dp.distn <- function(dpmat) {
 # Plot the MAPD curve(s)
 ###############################################################################
 
-setGeneric('plot.mapd', function(x, type=c('curve', 'canonical')) standardGeneric('plot.mapd'))
-setMethod('plot.mapd', 'SCAN2', function(x, type=c('curve', 'canonical')) {
-    helper.plot.mapd(mapd(x, type), type=type)
+setGeneric('plot.mapd', function(x, type=c('curve', 'canonical'), ...) standardGeneric('plot.mapd'))
+setMethod('plot.mapd', 'SCAN2', function(x, type=c('curve', 'canonical'), ...) {
+    helper.plot.mapd(mapd(x, type), type=type, ...)
 })
 
-setMethod('plot.mapd', 'summary.SCAN2', function(x, type=c('curve', 'canonical')) {
-    helper.plot.mapd(mapd(x, type), type=type)
+setMethod('plot.mapd', 'summary.SCAN2', function(x, type=c('curve', 'canonical'), ...) {
+    helper.plot.mapd(mapd(x, type), type=type, ...)
 })
 
-setMethod('plot.mapd', 'list', function(x, type=c('curve', 'canonical')) {
+setMethod('plot.mapd', 'list', function(x, type=c('curve', 'canonical'), ...) {
     classes <- sapply(x, class)
     if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
         stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
     }
 
-    helper.plot.mapd(mapd(x, type=type), type=type)
+    helper.plot.mapd(mapd(x, type=type), type=type, ...)
 })
 
-helper.plot.mapd <- function(mapds, type=c('curve', 'canonical')) {
+helper.plot.mapd <- function(mapds, type=c('curve', 'canonical'), ...) {
     type <- match.arg(type)
     if (type == 'curve') {
         lwd <- ifelse(ncol(mapds) > 5, 1, 2)
         matplot(mapds[,'binsize'], mapds[,-1],
             bty='l', log='x', lwd=lwd, lty='solid', type='l',
-            xlab='Bin size (log scale)', ylab='MAPD')
+            xlab='Bin size (log scale)', ylab='MAPD', ...)
     } else if (type == 'canonical') {
         # Rough: say one line height is equal to M width
         emsize <- strwidth('M', units='inches', cex=3/4)
         label.size <- max(c(4, sapply(names(mapds)[-1], strwidth, units='inches', cex=3/4)/emsize))
         oldpar <- par(mar=c(label.size, 4, 1, 1))
-        barplot(mapds, las=3, ylab='MAPD', xlab='', cex.names=3/4)
+        barplot(mapds, las=3, ylab='MAPD', xlab='', cex.names=3/4, ...)
         par(mar=oldpar)
     }
 }
