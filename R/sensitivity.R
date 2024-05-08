@@ -194,7 +194,7 @@ model.somatic.sensitivity <- function(tiles, muttype=c('snv', 'indel'), allelety
     #       predname column, so the several copies of the table produced for alleletype=maj,
     #       min and both all receive a copy.  Those copies are further propagated through
     #       glm() calls (which save a copy their input in the model object).
-    tiles[, (predname) := 1/(1+exp(predict(object=model, newdata=.SD, rankdeficient='NA')))]
+    tiles[, (predname) := 1/(1+exp(-predict(object=model, newdata=.SD, rankdeficient='NA')))]
 
     model
 }
