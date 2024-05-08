@@ -233,11 +233,13 @@ setMethod("data", "SCAN2", function(object, type=c('filtered', 'shared'), add.sa
 setMethod("data", "summary.SCAN2", function(object, type=c('filtered', 'shared'), add.sample.column=TRUE) {
     type <- match.arg(type)
 
-    ret <- helper.data(decompress.dt(object@gatk), single.cell=name(object), type=type)
+    ret <- helper.data(decompress.dt(object@gatk), single.cell=name(object), type=type, add.sample.column=add.sample.column)
     if (type == 'shared') {
         ordered.chroms <- ret[!duplicated(chr),chr]
+        # N.B. for type=shared, the number of columns taken from GATK is a subset.
+        # This is already handled by helper.data(type), so the rbind below succeeds.
         ret <- rbind(ret,
-            helper.data(decompress.dt(object@gatk.shared), single.cell=name(object), type=type), add.sample.column=add.sample.column)
+            helper.data(decompress.dt(object@gatk.shared), single.cell=name(object), type=type, add.sample.column=add.sample.column))
         # remove duplicate rows and sort table
         ret <- ret[!duplicated(paste(chr, pos, refnt, altnt))]
         ret[, chr := factor(chr, levels=ordered.chroms, ordered=TRUE)]
