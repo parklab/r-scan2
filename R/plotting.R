@@ -663,8 +663,6 @@ setMethod('plot.sensitivity', 'summary.SCAN2', function(object, min.tiles=150) {
 # tilewidth=1kb by default. the het germline SNP rate in humans is about 1/1.5kb. so
 # to get a min. genomic region containing roughly ~100 hSNPs, need 150kb = 150 tiles.
 helper.plot.sensitivity <- function(maj, min, main, min.tiles=150) {
-    #maj <- assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='maj')
-    #min <- assess.predicted.somatic.sensitivity(object, muttype=mt, alleletype='min')
     plot(maj[n > min.tiles, .(pred, sens)], lwd=2, type='b', pch=20, col=1, main=main, ylim=0:1,
         xlab="Predicted sensitivity based on local covariates",
         ylab='Actual sensitivity for germline het sites')
