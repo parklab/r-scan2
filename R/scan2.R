@@ -714,6 +714,37 @@ setMethod("compute.fdr", "SCAN2", function(object, path, mode=c('legacy', 'new')
     object
 })
 
+# To make MDA data usable, filter out insertions in homopolymers.
+# In the future, it will be better to use a more flexible method to remove
+# artifacts like this.
+mda.indel.artifact.mutsigs <- c(
+    # The most obvious artifact (from examining the ID83 spectrum) is 1bp
+    # insertions (either type, C or T).
+    paste0('1:Ins:C:', 3:5),
+    paste0('1:Ins:T:', 3:5),
+    # After removing the 1bp insertions, it becomes apparent that 2bp
+    # insertions in homopolymers are also frequent in MDA calls, though at
+    # MUCH lower levels.  My interpretation is that "2bp" insertions are
+    # actually double hits of 1bp insertion artifacts.  When double hits 
+    # occur in the same homopolymer run, there is no way to know if the
+    # two insertions where adjacent (i.e., a 2bp insertion) or separate.
+    #
+    # My interpretation is supported by the composition of the "2bp insertions" 
+    # when comparing indels from a set of >100 MDA neurons to ~80 PTA neurons.
+    # The inserted bases are:
+    #
+    #   > sort(table(all.passing[amp=='MDA' & mutsig %in% paste0('2:Ins:R:', 2:5) & phenotype=='Control',substr(altnt,2,3)]))
+    #   GC CT GA TC GG CC AG GT AC CA TG AT TA AA TT 
+    #   2  5  8 11 12 14 15 19 21 30 31 49 63 91 96 
+    #   > sort(table(all.passing[amp=='PTA' & mutsig %in% paste0('2:Ins:R:', 2:5) & phenotype=='Control',substr(altnt,2,3)]))
+    #   AA AC AG CA GT TC TT GA TA 
+    #   1  1  1  1  1  1  4  5  9 
+    #
+    # As expected, a majority (40%) of 2bp insertions are "AA" or "TT",
+    # which are indistinguishable from 2 independent 1bp T insertions, the
+    # most prevalent MDA artifact.
+    paste0('2:Ins:R:', 2:5)
+)
 
 # legacy mode - id.score/hs.score both must be strictly > the id/hs.score.q cutoffs.
 #               this was later found to be problematic for non-BWA MEM aligners that
@@ -735,7 +766,7 @@ setMethod("compute.static.filters", "SCAN2", function(object, mode=c('new', 'leg
         object@gatk[muttype == mt, c("cigar.id.test", "cigar.hs.test",
             "lowmq.test", "dp.test", "abc.test", "min.sc.alt.test", 
             "max.bulk.alt.test", "max.bulk.af.test", "max.bulk.binom.prob.test", 
-            "dbsnp.test", "csf.test") :=
+            "dbsnp.test", "csf.test", 'mda.indel.artifact.test') :=
             list(id.score >= object@excess.cigar.scores[[mt]]$id.score.q,
                 hs.score >= object@excess.cigar.scores[[mt]]$hs.score.q,
                 is.na(balt.lowmq) | balt.lowmq <= sfp$max.bulk.alt,
@@ -748,7 +779,9 @@ setMethod("compute.static.filters", "SCAN2", function(object, mode=c('new', 'leg
                 !sfp$exclude.dbsnp | dbsnp == '.',
                 # is.na(unique.donors) - doesn't matter which field we pick from the
                 # panel, if the site is missing all should be NA
-                !sfp$panel.use | (is.na(unique.donors) & sfp$panel.allow.missing) | unique.donors <= sfp$panel.max.unique.donors | max.out <= sfp$panel.max.out)]
+                !sfp$panel.use | (is.na(unique.donors) & sfp$panel.allow.missing) | unique.donors <= sfp$panel.max.unique.donors | max.out <= sfp$panel.max.out,
+                amp(object) != "MDA" | !(mutsig %in% mda.indel.artifact.mutsigs)
+                )]
 
         if (mode == 'legacy') {
             object@gatk[muttype == mt, c('cigar.id.test', 'cigar.hs.test') := 
@@ -759,7 +792,7 @@ setMethod("compute.static.filters", "SCAN2", function(object, mode=c('new', 'leg
     object@gatk[, static.filter :=
         cigar.id.test & cigar.hs.test & lowmq.test & dp.test &
         abc.test & min.sc.alt.test & max.bulk.alt.test & max.bulk.af.test & max.bulk.binom.prob.test &
-        dbsnp.test & csf.test]
+        dbsnp.test & csf.test & mda.indel.artifact.test]
     object
 })
 
@@ -851,8 +884,34 @@ setMethod("call.mutations", "SCAN2", function(object, target.fdr=0.01, quiet=FAL
     # Pass germline heterozygous sites using L-O-O for sensitivity estimation
     object@gatk[training.site == TRUE,
         training.pass := 
-            # same tests as static.filter EXCEPT dbsnp.test, lowmq.test, max.bulk.alt.test,
+            # same tests as static.filter EXCEPT:
+            #  "lowmq.test"
+            #  "max.bulk.alt.test", "max.bulk.af.test", "max.bulk.binom.prob.test", 
+            #  "dbsnp.test", "csf.test", 'mda.indel.artifact.test'
             # which mostly will fail at training het germline sites.
+            #
+            # of particular interest is mda.indel.artifact.test: ~25% of all
+            # germline population level indels are in the MDA artifact signature.  if
+            # these sites were set to pass=FALSE, it could underestimate the total
+            # indel burden if somatic indels are generally NOT in the artifact sig.
+            # that, however, will change depending on cell type/condition, so there is
+            # no way to know at this point in the pipeline.  the reason for ultimately
+            # making this decision is SPATIAL sensitivity: germline indels are rarer than
+            # germline SNPs, occurring closer to once per ~10kb rather than once per ~1kb.
+            # Thus, we place greater value on the fact that a germline call violating the
+            # artifact filter is evidence that SCAN2 is powered to detect indels GENERALLY
+            # in the ~10kb region.
+            #
+            # A better solution for sensitivity calculation would be:
+            #   1. fail germline indels that violate the mda filter (set pass=FALSE)
+            #   2. followed by an adjustment to sensitivity estimation: downsample
+            #      germline indels to match the somatic pass spectrum and calculate
+            #      sens.  The problem with this approach is downsampling will fail for
+            #      cells with very few somatic indels (some even have 0).  A possible
+            #      solution is to do something akin to bootstrapping: downsample the
+            #      germline indels to make somatic pass indels 100s or 1000s of times,
+            #      calculating a sensitivity each time.  Hopefully that would yield a
+            #      stable sens. estimate.
             (cigar.id.test & cigar.hs.test & dp.test & abc.test & min.sc.alt.test) &
             lysis.fdr <= target.fdr & mda.fdr <= target.fdr]
 
