@@ -94,21 +94,23 @@ id83.cols <- col <- rep(c('#FBBD75', '#FC7F24', '#B0DB8E', '#3B9F36',
 #       b. x is a SCAN2/summary.SCAN2
 #   If found, print the sample name in the top left of the plot.
 #   If title is not NULL, print title in the top left of the plot.
-plot.sbs96 <- function(x, eps=0, fraction=FALSE, show.types=FALSE, show.detailed.types=FALSE, title=NULL, max.nrow=8, ...)
+plot.sbs96 <- function(x, eps=0, fraction=FALSE, show.types=FALSE, show.detailed.types=FALSE, title=NULL, title.cex=1, max.nrow=8, uniform.y.axis=TRUE, ...)
 {
     mutsig.data <- prehelper.plot.mutsig(x=x, eps=eps, fraction=fraction, factor.fn=sbs96)
 
     helper.plot.mutsig(spectrum=mutsig.data$spectrum, mode=mutsig.data$mode,
-        colors=sbs96.cols, cex.names=0.7, max.nrow=max.nrow, title=title,
+        colors=sbs96.cols, axis.cex=0.7, max.nrow=max.nrow, title=title, title.cex=title.cex,
+        uniform.y.axis=uniform.y.axis,
         show.types=show.types, show.detailed.types=show.detailed.types, ...)
 }
 
-plot.id83 <- function(x, eps=0, fraction=FALSE, show.types=FALSE, show.detailed.types=FALSE, title=NULL, max.nrow=8, ...)
+plot.id83 <- function(x, eps=0, fraction=FALSE, show.types=FALSE, show.detailed.types=FALSE, title=NULL, title.cex=1, max.nrow=8, uniform.y.axis=TRUE, ...)
 {
     mutsig.data <- prehelper.plot.mutsig(x=x, eps=eps, fraction=fraction, factor.fn=id83)
 
     helper.plot.mutsig(spectrum=mutsig.data$spectrum, mode=mutsig.data$mode,
-        colors=id83.cols, cex.names=0.7, max.nrow=max.nrow, title=title,
+        colors=id83.cols, axis.cex=0.7, max.nrow=max.nrow, title=title, title.cex=title.cex,
+        uniform.y.axis=uniform.y.axis,
         show.types=show.types, show.detailed.types=show.detailed.types, ...)
 }
 
@@ -166,22 +168,19 @@ prehelper.plot.mutsig <- function(x, factor.fn, eps=0, fraction=FALSE) {
     list(mode=mode, spectrum=spectrum)
 }
 
-helper.plot.mutsig <- function(spectrum, colors, ylim, mode=c('sbs96', 'id83'), cex.names=0.7, show.types=FALSE, show.detailed.types=FALSE, max.nrow=8, title=NULL, ...)
+helper.plot.mutsig <- function(spectrum, colors, ylim, mode=c('sbs96', 'id83'), axis.cex=0.7, show.types=FALSE, show.detailed.types=FALSE, max.nrow=8, title=NULL, title.cex=1, uniform.y.axis=TRUE, ...)
 {
     mode <- match.arg(mode)
 
     botlines <- 1/4
     if (show.detailed.types & mode == 'id83')
-        botlines <- botlines + 5*cex.names   # format: N:NNN:N:N 
+        botlines <- botlines + 5*axis.cex   # format: N:NNN:N:N 
     else if (show.detailed.types & mode == 'sbs96')
-        botlines <- botlines + 2*cex.names     # format: NNN
+        botlines <- botlines + 2*axis.cex     # format: NNN
 
     toplines <- 1/2
     if (show.types)
         toplines <- toplines + 1
-
-    if (missing(ylim))
-        ylim <- c(0, max(spectrum)*1.20)
 
     if (ncol(spectrum) > 1) {
         lm <- matrix(0, nrow=min(max.nrow, ncol(spectrum)), ncol=ceiling(ncol(spectrum)/max.nrow))
@@ -189,17 +188,24 @@ helper.plot.mutsig <- function(spectrum, colors, ylim, mode=c('sbs96', 'id83'), 
         layout(lm)
     }
 
+    if (missing(ylim))
+        ylim <- c(0, max(spectrum)*1.20)
+
     mar <- c(botlines,4,toplines,1/4)
     for (i in 1:ncol(spectrum)) {
+        # only use this column's max count to determine y-axis. still add extra space
+        # for title.
+        if (!uniform.y.axis)
+            ylim <- c(0, 1.2*max(spectrum[,i]))
         sample.name <- colnames(spectrum)[i]   # colnames(spectrum) are lost due to [,i]
         helper.plot.mutsig.one(spectrum=spectrum[,i], mode=mode,
             col=colors, ylim=ylim, mar=mar,
-            title=ifelse(is.null(title), sample.name, title),
+            title=ifelse(is.null(title), sample.name, title), title.cex=title.cex,
             show.types=show.types, show.detailed.types=show.detailed.types, ...)
     }
 }
 
-helper.plot.mutsig.one <- function(spectrum, colors, ylim, mar, title=NULL, mode=c('sbs96', 'id83'), cex.names=0.7, show.types=FALSE, show.detailed.types=FALSE, ...)
+helper.plot.mutsig.one <- function(spectrum, colors, ylim, mar, title=NULL, title.cex=1, mode=c('sbs96', 'id83'), axis.cex=0.7, show.types=FALSE, show.detailed.types=FALSE, ...)
 {
     mode <- match.arg(mode)
     oldpar <- par(mar=mar)
@@ -215,7 +221,7 @@ helper.plot.mutsig.one <- function(spectrum, colors, ylim, mar, title=NULL, mode
 
         line <- ifelse(mode == 'sbs96', -1, -1)
         axis(side=1, at=p, labels=x.names, tick=FALSE,
-            family='mono', las=3, cex.axis=cex.names, line=line)
+            family='mono', las=3, cex.axis=axis.cex, line=line)
     }
 
     if (mode == 'sbs96') {
@@ -244,7 +250,7 @@ helper.plot.mutsig.one <- function(spectrum, colors, ylim, mar, title=NULL, mode
 
     if (!is.null(title) & nchar(title) > 0) {
         legend('topleft', legend=title, box.col=NA, bg='white',
-            inset=c(0.01, 0), x.intersp=0, text.font=2)
+            inset=c(0.01, 0), x.intersp=0, text.font=2, cex=title.cex)
     }
 
     par(oldpar)
