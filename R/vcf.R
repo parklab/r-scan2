@@ -1,12 +1,11 @@
-helper.vcf.header <- function(object, config=object@config) {
+helper.vcf.header <- function(object, ref.genome) {
     # read the FASTA index for the reference
-    fai <- read.table(paste0(config$ref, '.fai'), sep='\t', stringsAsFactors=F)
+    fai <- read.table(paste0(ref.genome, '.fai'), sep='\t', stringsAsFactors=F)
 
-    # use call.mutations$target.fdr rather than config$target_fdr since config$target_fdr
-    # does not update on calls to, e.g., call.mutations(target.fdr)
-    filter.descs <- compute.filter.reasons(object@gatk,
-        target.fdr=object@call.mutations$target.fdr,
-        return.filter.descriptions=TRUE)
+    #filter.descs <- compute.filter.reasons(object@gatk,
+        #target.fdr=target.fdr,
+        #return.filter.descriptions=TRUE)
+    filter.descs <- compute.filter.reasons(return.filter.descriptions=TRUE)
     vcf.header <- c(
         '##fileformat=VCFv4.4',
         paste0('##fileDate=', Sys.Date()),
@@ -33,7 +32,7 @@ helper.vcf.header <- function(object, config=object@config) {
         sprintf('##SAMPLE=<ID=%s,SampleType=SingleCell,Description="%s">', object@single.cell, "Single cell"),
         sprintf('##SAMPLE=<ID=%s,SampleType=Bulk,Description="%s">', object@bulk, "Matched bulk"),
         sprintf('##PEDIGREE=<ID=%s,Original=%s>', object@single.cell, object@bulk),
-        sprintf('##reference=%s', config$ref),
+        sprintf('##reference=%s', ref.genome),
         sprintf('##contig=<ID=%s,length=%d>', fai[,1], fai[,2]),
         paste(c("#CHROM", "POS", 'ID', 'REF', 'ALT', 'QUAL', 'FILTER',
             'INFO', 'FORMAT', object@single.cell, object@bulk), collapse='\t')
@@ -54,10 +53,30 @@ helper.build.info.string <- function(gatk) {
 # Write out a results data frame to out.file
 # set file to NULL to return the VCF data in a data.table rather
 # than writing to file.
-setGeneric("write.vcf", function(object, file, simple.filters=FALSE, overwrite=FALSE, config=object@config)
+setGeneric("write.vcf", function(object, file, gatktab=data(object), simple.filters=FALSE, overwrite=FALSE, config=object@config)
     standardGeneric("write.vcf"))
-setMethod("write.vcf", "SCAN2", function(object, file, simple.filters=FALSE, overwrite=FALSE, config=object@config)
+setMethod("write.vcf", "SCAN2", function(object, file, gatktab=data(object), simple.filters=FALSE, overwrite=FALSE, config=object@config)
 {
+    helper.write.vcf(gatktab=gatktab, file=file,
+        header=helper.vcf.header(object, ref.genome=config$ref),
+        # use call.mutations$target.fdr rather than config$target_fdr since config$target_fdr
+        # does not update on calls to, e.g., call.mutations(target.fdr)
+        target.fdr=object@call.mutations$target.fdr,
+        genome.string=object@genome.string,
+        simple.filters=simple.filters, overwrite=overwrite)
+})
+
+# Currently, the only difference is where target.fdr is taken from
+setMethod("write.vcf", "summary.SCAN2", function(object, file, gatktab=data(object), simple.filters=FALSE, overwrite=FALSE, config=object@config)
+{
+    helper.write.vcf(gatktab=gatktab, file=file,
+        header=helper.vcf.header(object, ref.genome=config$ref),
+        target.fdr=object@call.mutations.and.mutburden$selected.target.fdr,
+        genome.string=object@genome.string,
+        simple.filters=simple.filters, overwrite=overwrite)
+})
+
+helper.write.vcf <- function(gatktab, file, header, target.fdr, genome.string, simple.filters=FALSE, overwrite=FALSE) {
     write.file <- !is.null(file)
 
     # convenience for writing to stdout
@@ -69,25 +88,22 @@ setMethod("write.vcf", "SCAN2", function(object, file, simple.filters=FALSE, ove
             stop(sprintf("output file %s already exists, please delete it first", file))
         }
     }
-    header <- helper.vcf.header(object, config)
     if (write.file) {
         f <- file(file, 'w', raw=file == '/dev/stdout')
         writeLines(header, con=f)
     }
 
-    rescue.col <- rep(FALSE, nrow(object@gatk))
-    if ('rescue' %in% colnames(object@gatk))
-        rescue.col <- object@gatk$rescue
+    rescue.col <- rep(FALSE, nrow(gatktab))
+    if ('rescue' %in% colnames(gatktab))
+        rescue.col <- gatktab$rescue
 
-    contigs <- seqnames(genome.string.to.bsgenome.object(object@genome.string))
-    s <- object@gatk[,.(
+    contigs <- seqnames(genome.string.to.bsgenome.object(genome.string))
+    s <- gatktab[,.(
         # factorize chromosome so that it can be sorted to match contig list
         chr=factor(chr, levels=contigs, ordered=TRUE),
         pos, dbsnp, refnt, altnt, qual='.',
-        filter=compute.filter.reasons(object@gatk,
-            target.fdr=object@call.mutations$target.fdr,
-            simple.filters=simple.filters),
-        info=helper.build.info.string(object@gatk),
+        filter=compute.filter.reasons(gatktab, target.fdr=target.fdr, simple.filters=simple.filters),
+        info=helper.build.info.string(gatktab),
         format='GT:DP:AD:AF:AB:ABSD:ABC:PAA:AA:GQ:SC',
         sc=sprintf("%s:%d:%d,%d:%s:%s:%s:%s:%s:%s:%s:%d",
             ifelse((!is.na(pass) & pass) | (!is.na(rescue.col) & rescue.col), '0/1', './.'),
@@ -114,5 +130,4 @@ setMethod("write.vcf", "SCAN2", function(object, file, simple.filters=FALSE, ove
         writeLines(s[,paste(chr,pos,dbsnp,refnt,altnt,qual,filter,info,format,sc,bulk,sep='\t')], con=f)
     }
     close(f)
-})
-
+}
