@@ -287,12 +287,12 @@ unapproxify <- function(a) rep(as.numeric(names(a)), a)
 
 
 # smooth an approxify()ed 'atab'.  map.fn() allows he 
-approxify.to.density <- function(atab, from, to, map.fn=identity) {
+approxify.to.density <- function(atab, from, to, map.fn=identity, ...) {
     # approxify produces a table: names(atab) are the values and ret are the freqs
     freqs <- atab
     vals <- map.fn(as.numeric(names(atab)))
 
-    density(vals, from=0, to=1, weights=freqs/sum(freqs))[c('x','y')]
+    density(vals, from=0, to=1, weights=freqs/sum(freqs), ...)[c('x','y')]
 }
 
 
