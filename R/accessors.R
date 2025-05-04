@@ -538,7 +538,7 @@ helper.ab.distn <- function(ab, single.cell, type=c('af', 'ab')) {
     ab <- ab$training.sites[[ifelse(type == 'ab', 'gp.mu', 'af')]]
 
     map.fn <- if (type == 'ab') function(x) 1/(1+exp(-x)) else identity
-    ret <- approxify.to.density(ab, from=0, to=1, map.fn=map.fn)
+    ret <- approxify.to.density(ab, from=0, to=1, map.fn=map.fn, adjust=1/5)
     ret <- cbind(ret$x, ret$y)
     colnames(ret) <- c(type, single.cell)
     ret
