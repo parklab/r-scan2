@@ -820,8 +820,9 @@ setMethod('plot.mutburden', 'SCAN2',
     function(object, muttype=c('snv', 'indel'))
 {
     this.muttype <- match.arg(muttype)
-    tab <- summarize.call.mutations.and.mutburden(object)[muttype == this.muttype]
-    helper.plot.mutburden(tab)
+    ret <- summarize.call.mutations.and.mutburden(object)
+    helper.plot.mutburden(ret$metrics[muttype == this.muttype],
+        selected.fdr=ret$selected.target.fdr)
 })
 
 setMethod('plot.mutburden', 'summary.SCAN2',
@@ -829,20 +830,19 @@ setMethod('plot.mutburden', 'summary.SCAN2',
 {
     this.muttype <- match.arg(muttype)
     tab <- object@call.mutations.and.mutburden$metrics[muttype == this.muttype]
-    helper.plot.mutburden(tab)
+    helper.plot.mutburden(tab, selected.fdr=object@call.mutations.and.mutburden$selected.target.fdr)
 })
 
 # this.muttype - don't name this "muttype" because that matches a column name in
 # the table. haven't figured out how to make data.table differentiate between a
 # column name and variable in the calling env.
-helper.plot.mutburden <- function(tab) {
-    fdr.used <- tab[selected.target.fdr == TRUE]$target.fdr
+helper.plot.mutburden <- function(tab, selected.fdr) {
     plot(tab[target.fdr < 1,.(target.fdr, burden)],
         type='b', pch=20, log='x',
         xlab='--target-fdr parameter (log-scale)',
         ylab='Mutation burden',
         main=paste('SCAN2 total extrapolated burden'))
-    abline(v=fdr.used, lty='dashed')
+    abline(v=selected.fdr, lty='dashed')
 }
 
 
