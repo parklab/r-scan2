@@ -253,7 +253,7 @@ vary.static.filter.param <- function(object, param.name, param.values, new.param
 #       the SCAN2 object needs to be copied before varying calling parameters or it
 #       will be overwritten. this is optional since, in some cases, callers want to
 #       make their own copies.
-vary.target.fdr <- function(object, target.fdrs, selected.target.fdr=object@call.mutations$target.fdr, make.copy=TRUE, progress=TRUE) {
+vary.target.fdr <- function(object, target.fdrs, selected.target.fdr=object@call.mutations$target.fdr, make.copy=TRUE, progress=FALSE) {
     target.fdrs <- unique(sort(c(selected.target.fdr, target.fdrs)))
 
     # do not alter the original gatk data.table. all SCAN2 methods update
@@ -262,29 +262,18 @@ vary.target.fdr <- function(object, target.fdrs, selected.target.fdr=object@call
     if (make.copy)
         x <- data.table::copy(object)  
 
-    # Just encapsulates the work so we can optionally call with_progress
-    do.work <- function() {
-        old.opt <- getOption('future.globals.maxSize')
-        options(future.globals.maxSize=4e9)  # 4GB
-        ret <- future.apply::future_lapply(target.fdrs, function(target.fdr) {
-            x <- call.mutations(x, target.fdr=target.fdr)
-            x <- compute.mutburden(x)
+    old.opt <- getOption('future.globals.maxSize')
+    options(future.globals.maxSize=4e9)  # 4GB
+    changing.fdrs <- future.apply::future_lapply(target.fdrs, function(target.fdr) {
+        x <- call.mutations(x, target.fdr=target.fdr)
+        x <- compute.mutburden(x)
 
-            metrics <- vary.get.metrics(x, 'target.fdr', target.fdr)
-            calls <- vary.get.calls(x, 'target.fdr', target.fdr)
-            if (progress) p(amount=1)
-            list(metrics=metrics, calls=calls)
-        })
-        options(future.globals.maxSize=old.opt)
-        ret
-    }
-
-    if (progress) {
-        p <- progressr::progressor(along=1:length(target.fdrs))
-        progressr::with_progress(changing.fdrs <- do.work(), enable=TRUE)
-    } else {
-        changing.fdrs <- do.work()
-    }
+        metrics <- vary.get.metrics(x, 'target.fdr', target.fdr)
+        calls <- vary.get.calls(x, 'target.fdr', target.fdr)
+        if (progress) p(amount=1)
+        list(metrics=metrics, calls=calls)
+    })
+    options(future.globals.maxSize=old.opt)
 
     list(metrics=rbindlist(lapply(changing.fdrs, `[[`, 'metrics')),
          calls=rbindlist(lapply(changing.fdrs, `[[`, 'calls')))
