@@ -665,6 +665,16 @@ mutsig.rescue <- function(object.paths, add.muts, rescue.target.fdr=0.01,
     rm(gatks)
     gc()
 
+    # If there are no mutations of a particular type, skip it
+    n.muts <- sapply(true.sigs, sum)
+    if (any(n.muts == 0)) {
+        for (mt in names(true.sigs[n.muts == 0])) {
+            cat(mt, ': 0 mutations called across cells, skipping rescue for this mutation type.\n')
+        }
+        true.sigs <- true.sigs[n.muts > 0]
+    }
+        
+
 
     cat('Step3. Rescuing mutations and writing out new SCAN2 object RDA files.\n')
     progressr::with_progress({
@@ -672,11 +682,11 @@ mutsig.rescue <- function(object.paths, add.muts, rescue.target.fdr=0.01,
         p(amount=0, class='sticky', perfcheck(print.header=TRUE))
         results <- future.apply::future_lapply(1:length(object.paths), function(i) {
             # Summary of old note: do not add any new columns to x@gatk in this
-            # lapply. Because the objects are loaded from disk, data.table cannot
-            # add a new column duplicating copying the entire 2.5-3.0 Gb data.table.
+            # lapply. Because the objects are loaded from disk, data.table will
+            # duplicate the entire 2.5-3.0 Gb data.table if asked to add a column.
             pc <- perfcheck(paste('mutsig.rescue.one',i), {
                 x <- get(load(object.paths[i]))
-                for (mt in muttypes) {
+                for (mt in names(true.sigs)) {
                     x@mutsig.rescue[[mt]] <- mutsig.rescue.one(x,
                         muttype=mt,
                         artifact.sig=get(artifact.sigs[[mt]]),
@@ -709,7 +719,7 @@ mutsig.rescue <- function(object.paths, add.muts, rescue.target.fdr=0.01,
     # consolidate all SHT test p-values for multiple hypothesis testing correction
     # there are separate tests for snvs and indels; multiple hypothesis correction
     # should be applied to each separately.
-    shts <- do.call(rbind, lapply(c('snv', 'indel'), function(mt) {
+    shts <- do.call(rbind, lapply(names(true.sigs), function(mt) {
         sht <- data.table(sample=sapply(results, function(r) r$sample),
                           muttype=mt,
                           sig.homogeneity.test=sapply(results, function(r) r$sig.homogeneity.test[[mt]]))
