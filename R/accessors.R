@@ -771,3 +771,55 @@ helper.mutburden <- function(tab.one.row, suppress, muttype) {
     }
     ret
 }
+
+
+# Identify runs of passing sSNVs as sMNVs.
+# Power here is likely low, though directly adjacent bases likely have very
+# similar statistics, so are likely to be passed together more than independent
+# sites.
+# XXX: real MNV calling would require inspecting reads to ensure the adjacent
+# SNVs are on the same haplotype.
+#   * Sentieon does not output any read-backed phasing info by default. The
+#     --phasing option is only respected in GVCF mode.
+#   * A reasonable work around is to require close to equal alt and ref read
+#     support. (current strategy)
+#       * For MNVs of length > 2, rather than inspect read diffs between all
+#         pairs (e.g., base 1 vs. base 2, base 1 vs. base 3, base 2 vs. base 3,
+#         etc.), use the maximum difference.
+setGeneric("mnv", function(x, max.read.diff=2) standardGeneric("mnv"))
+setMethod("mnv", "SCAN2", function(x, max.read.diff=2) {
+    helper.mnv(passing(x, muttype='snv'))
+})
+
+setMethod("mnv", "summary.SCAN2", function(x, max.read.diff=2) {
+    helper.mnv(passing(x, muttype='snv'))
+})
+
+helper.mnv <- function(tab, max.read.diff=2) {
+    # Is the distance to the nearest called SNV exactly 1?
+    # abs(diff(.)) is necessary to avoid loss of MNVs at chromosome boundaries
+    # since the diff will be negative.
+    tab[, c('rowid', 'mnv') := list(1:.N, pmin(c(Inf,abs(diff(pos))), c(abs(diff(pos)),Inf))==1)]
+    # As `mnv` switches from FALSE to TRUE, increment the ID counter.
+    # Since there are two switches per MNV (F->T, then T->F), naive incrementation
+    # would assign only odd IDs.
+    # c(FALSE, mnv) - start the process outside of an MNV (FALSE) so that if
+    #   the first row in tab is an MNV, it is detected.
+    ret <- tab[, mnv.id := ifelse(mnv, (cumsum(abs(diff(c(FALSE, mnv))))+1)/2, 0)][mnv.id > 0][, mnv := NULL]
+
+    ret <- ret[, .(sample=sample[1], chr=chr[1],
+        pos=min(pos),
+        refnt=paste0(refnt, collapse=''), altnt=paste0(altnt, collapse=''),
+        muttype='mnv',
+        # altd and refd: maximum difference between alt and ref read counts. used to filter
+        altd=diff(range(scalt)), refd=diff(range(scref)),
+        bref=bref[1], balt=balt[1], bulk.dp=bulk.dp[1], bulk.af=bulk.af[1], bulk.binom.prob=bulk.binom.prob[1],
+        scalt=scalt[1], scref=scref[1], dp=dp[1], af=af[1],
+        rowids=paste0(rowid, collapse=',')), by=mnv.id]
+    # do these things after grouping by site
+    # there's currently no mutsig definition in wide use that classifies
+    # MNVs of different lengths. so this paste does not do any mapping to
+    # signature channels, just a simple paste for convenience.
+    ret[, c('mutlen', 'mutsig') := list(nchar(refnt), paste0(refnt, '>', altnt))]
+    ret[altd <= max.read.diff & refd <= max.read.diff][, mnv.id := NULL][]
+}
