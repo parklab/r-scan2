@@ -795,6 +795,19 @@ setMethod("mnv", "summary.SCAN2", function(x, max.read.diff=2) {
     helper.mnv(passing(x, muttype='snv'))
 })
 
+setMethod("mnv", "list", function(x, max.read.diff=2) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    
+    # must be applied to each sample separately unless we can guarantee
+    # that passing(.) will ALWAYS be sample-sorted. easier to just apply
+    # separately.
+    rbindlist(lapply(x, function(s) helper.mnv(passing(s, muttype='snv'))))
+})
+
+
 helper.mnv <- function(tab, max.read.diff=2) {
     # Is the distance to the nearest called SNV exactly 1?
     # abs(diff(.)) is necessary to avoid loss of MNVs at chromosome boundaries
