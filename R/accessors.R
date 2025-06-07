@@ -265,8 +265,8 @@ helper.data <- function(tab, single.cell, type=c('filtered', 'shared'), add.samp
 # Return SCAN2 somatic mutation calls.  The default is to return VAF-based calls
 # (i.e., "first-pass" calls).  passtype=rescued returns ONLY rescued calls and
 # passtype=any returns both.  See the convenience wrappers rescued() and all.calls()
-setGeneric("passing", function(x, muttype=c('both', 'snv', 'indel'), passtype=c('vafbased', 'rescued', 'any')) standardGeneric("passing"))
-setMethod("passing", "SCAN2", function(x, muttype=c('both', 'snv', 'indel'), passtype=c('vafbased', 'rescued', 'any')) {
+setGeneric("passing", function(x, muttype=c('both', 'snv', 'indel'), passtype=c('vafbased', 'rescued', 'any'), combine.mnv=FALSE) standardGeneric("passing"))
+setMethod("passing", "SCAN2", function(x, muttype=c('both', 'snv', 'indel'), passtype=c('vafbased', 'rescued', 'any'), combine.mnv=FALSE) {
     mt <- match.arg(muttype)
     if (mt == 'both')
         mt <-c('snv', 'indel')
@@ -283,6 +283,9 @@ setMethod("passing", "SCAN2", function(x, muttype=c('both', 'snv', 'indel'), pas
     
     zero.rows <- nrow(ret) == 0
 
+    if (!zero.rows & combine.mnv & 'snv' %in% mt)
+        ret <- helper.combine.mnv(ret)
+
     # Add the sample column
     ret <- data.table(sample=name(x), ret)
 
@@ -296,7 +299,7 @@ setMethod("passing", "SCAN2", function(x, muttype=c('both', 'snv', 'indel'), pas
         ret
 })
 
-setMethod("passing", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'indel'), passtype=c('vafbased', 'rescued', 'any')) {
+setMethod("passing", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'indel'), passtype=c('vafbased', 'rescued', 'any'), combine.mnv=FALSE) {
     # Summary objects have a special, uncompressed data.table with all
     # calls that allows quick access without decompression.
     mt <- match.arg(muttype)
@@ -313,6 +316,9 @@ setMethod("passing", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'inde
 
     # see data(SCAN2) above for why this is done
     zero.rows <- nrow(ret) == 0
+    if (!zero.rows & combine.mnv & 'snv' %in% mt)
+        ret <- helper.combine.mnv(ret)
+
     ret <- data.table(sample=name(x), ret)
     if (zero.rows)
         ret[-1]
@@ -320,14 +326,28 @@ setMethod("passing", "summary.SCAN2", function(x, muttype=c('both', 'snv', 'inde
         ret
 })
 
-setMethod("passing", "list", function(x, muttype=c('both', 'snv', 'indel'), passtype=c('vafbased', 'rescued', 'any')) {
+
+helper.combine.mnv <- function(tab) {
+    # retain whatever chromosome sort order `tab` had
+    chr.order <- tab[!duplicated(chr), chr]
+    tab.indel <- tab[muttype == 'indel']
+    tab.noindel <- tab[muttype != 'indel']
+    mnv.data <- helper.mnv(tab.noindel, return.rowids=TRUE)
+    tab.mnv <- mnv.data$tab
+    tab.noindel <- tab.noindel[-mnv.data$rowids,]
+    ret <- rbind(tab.indel, tab.noindel, tab.mnv)[order(factor(chr, levels=chr.order), pos)]
+    ret
+}
+
+
+setMethod("passing", "list", function(x, muttype=c('both', 'snv', 'indel'), passtype=c('vafbased', 'rescued', 'any'), combine.mnv=FALSE) {
     classes <- sapply(x, class)
     if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
         stop('x must be a list of SCAN2 or summary.SCAN2 xs only')
     }
     
     rbindlist(lapply(x, function(x) {
-        tab <- passing(x, muttype=muttype, passtype=passtype)
+        tab <- passing(x, muttype=muttype, passtype=passtype, combine.mnv=combine.mnv)
         # the data table contains a column named after the single cell ID.  cannot
         # leave this in or else data.table will complain about different column
         # names between tables. (it is also useless)
@@ -788,11 +808,11 @@ helper.mutburden <- function(tab.one.row, suppress, muttype) {
 #         etc.), use the maximum difference.
 setGeneric("mnv", function(x, max.read.diff=2) standardGeneric("mnv"))
 setMethod("mnv", "SCAN2", function(x, max.read.diff=2) {
-    helper.mnv(passing(x, muttype='snv'))
+    helper.mnv(passing(x, muttype='snv', combine.mnv=FALSE))
 })
 
 setMethod("mnv", "summary.SCAN2", function(x, max.read.diff=2) {
-    helper.mnv(passing(x, muttype='snv'))
+    helper.mnv(passing(x, muttype='snv', combine.mnv=FALSE))
 })
 
 setMethod("mnv", "list", function(x, max.read.diff=2) {
@@ -804,35 +824,39 @@ setMethod("mnv", "list", function(x, max.read.diff=2) {
     # must be applied to each sample separately unless we can guarantee
     # that passing(.) will ALWAYS be sample-sorted. easier to just apply
     # separately.
-    rbindlist(lapply(x, function(s) helper.mnv(passing(s, muttype='snv'))))
+    rbindlist(lapply(x, function(s) helper.mnv(passing(s, muttype='snv', combine.mnv=FALSE))))
 })
 
 
-helper.mnv <- function(tab, max.read.diff=2) {
-    # Is the distance to the nearest called SNV exactly 1?
-    # abs(diff(.)) is necessary to avoid loss of MNVs at chromosome boundaries
-    # since the diff will be negative.
-    tab[, c('rowid', 'mnv') := list(1:.N, pmin(c(Inf,abs(diff(pos))), c(abs(diff(pos)),Inf))==1)]
-    # As `mnv` switches from FALSE to TRUE, increment the ID counter.
-    # Since there are two switches per MNV (F->T, then T->F), naive incrementation
-    # would assign only odd IDs.
+helper.mnv <- function(tab, max.read.diff=2, return.rowids=FALSE) {
+    # Is the distance to the nearest called SNV exactly 1? abs(diff(.)) addresses chromosome boundaries.
+    ret <- copy(tab)[, c('rowid', 'mnv') := list(1:.N, pmin(c(Inf,abs(diff(pos))), c(abs(diff(pos)),Inf))==1)]
+    # As `mnv` switches from FALSE to TRUE, increment the ID counter.  Since there are two switches
+    # per MNV (F->T, then T->F), naive incrementation would assign only odd IDs.
     # c(FALSE, mnv) - start the process outside of an MNV (FALSE) so that if
     #   the first row in tab is an MNV, it is detected.
-    ret <- tab[, mnv.id := ifelse(mnv, (cumsum(abs(diff(c(FALSE, mnv))))+1)/2, 0)][mnv.id > 0][, mnv := NULL]
+    ret <- ret[, mnv.id := ifelse(mnv, (cumsum(abs(diff(c(FALSE, mnv))))+1)/2, 0)][mnv.id > 0][, mnv := NULL]
 
-    ret <- ret[, .(sample=sample[1], chr=chr[1],
-        pos=min(pos),
-        refnt=paste0(refnt, collapse=''), altnt=paste0(altnt, collapse=''),
-        muttype='mnv',
-        # altd and refd: maximum difference between alt and ref read counts. used to filter
-        altd=diff(range(scalt)), refd=diff(range(scref)),
-        bref=bref[1], balt=balt[1], bulk.dp=bulk.dp[1], bulk.af=bulk.af[1], bulk.binom.prob=bulk.binom.prob[1],
-        scalt=scalt[1], scref=scref[1], dp=dp[1], af=af[1],
-        rowids=paste0(rowid, collapse=',')), by=mnv.id]
-    # do these things after grouping by site
-    # there's currently no mutsig definition in wide use that classifies
-    # MNVs of different lengths. so this paste does not do any mapping to
-    # signature channels, just a simple paste for convenience.
-    ret[, c('mutlen', 'mutsig') := list(nchar(refnt), paste0(refnt, '>', altnt))]
-    ret[altd <= max.read.diff & refd <= max.read.diff][, mnv.id := NULL][]
+    # It's faster to compute this twice than to try to stuff the rowids into strings and
+    # then parse them out later.
+    if (return.rowids) {
+        rowids <- ret[, .(altd=diff(range(scalt)), refd=diff(range(scref)), rowid), by=mnv.id]
+        rowids <- rowids[altd <= max.read.diff & refd <= max.read.diff, rowid]
+    }
+
+    # current imperfect strategy: just use the statistics of the first SNV
+    ret <- ret[, c(.SD[1,],
+        new.refnt=paste0(refnt, collapse=''),
+        new.altnt=paste0(altnt, collapse=''),
+        altd=diff(range(scalt)), refd=diff(range(scref))),
+        by=mnv.id]
+
+    ret <- ret[altd <= max.read.diff & refd <= max.read.diff]
+    ret[, c('refnt', 'altnt', 'muttype', 'mutsig') := list(new.refnt, new.altnt, 'mnv', paste0(new.refnt, '>', new.altnt))]
+    ret[, c('new.refnt', 'new.altnt', 'refd', 'altd', 'mnv.id', 'rowid') := list(NULL, NULL, NULL, NULL, NULL, NULL)]
+
+    if (return.rowids)
+        list(rowids=rowids, tab=ret)
+    else
+        ret
 }
