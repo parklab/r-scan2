@@ -334,7 +334,9 @@ helper.combine.mnv <- function(tab) {
     tab.noindel <- tab[muttype != 'indel']
     mnv.data <- helper.mnv(tab.noindel, return.rowids=TRUE)
     tab.mnv <- mnv.data$tab
-    tab.noindel <- tab.noindel[-mnv.data$rowids,]
+    if (nrow(tab.mnv) > 0) {
+        tab.noindel <- tab.noindel[-mnv.data$rowids,]
+    }
     ret <- rbind(tab.indel, tab.noindel, tab.mnv)[order(factor(chr, levels=chr.order), pos)]
     ret
 }
@@ -836,25 +838,31 @@ helper.mnv <- function(tab, max.read.diff=2, return.rowids=FALSE) {
     # c(FALSE, mnv) - start the process outside of an MNV (FALSE) so that if
     #   the first row in tab is an MNV, it is detected.
     ret <- ret[, mnv.id := ifelse(mnv, (cumsum(abs(diff(c(FALSE, mnv))))+1)/2, 0)][mnv.id > 0][, mnv := NULL]
+    rowids <- c()
 
-    # It's faster to compute this twice than to try to stuff the rowids into strings and
-    # then parse them out later.
-    if (return.rowids) {
-        rowids <- ret[, .(altd=diff(range(scalt)), refd=diff(range(scref)), rowid), by=mnv.id]
-        rowids <- rowids[altd <= max.read.diff & refd <= max.read.diff, rowid]
+    if (nrow(ret) > 0) {
+        # It's faster to compute this twice than to try to stuff the rowids into strings and
+        # then parse them out later.
+        if (return.rowids) {
+            rowids <- ret[, .(altd=diff(range(scalt)), refd=diff(range(scref)), rowid), by=mnv.id]
+            rowids <- rowids[altd <= max.read.diff & refd <= max.read.diff, rowid]
+        }
+    
+        # current imperfect strategy: just use the statistics of the first SNV
+        ret <- ret[, c(.SD[1,],
+            new.refnt=paste0(refnt, collapse=''),
+            new.altnt=paste0(altnt, collapse=''),
+            altd=diff(range(scalt)), refd=diff(range(scref))),
+            by=mnv.id]
+    
+        ret <- ret[altd <= max.read.diff & refd <= max.read.diff]
+        ret[, c('refnt', 'altnt', 'muttype', 'mutsig') := list(new.refnt, new.altnt, 'mnv', paste0(new.refnt, '>', new.altnt))]
+        ret[, c('new.refnt', 'new.altnt', 'refd', 'altd', 'mnv.id', 'rowid') := list(NULL, NULL, NULL, NULL, NULL, NULL)]
+    } else {
+        # get rid of the columns so the 0-row table can be joined transparently
+        ret[, c('rowid', 'mnv.id') := list(NULL, NULL)]
     }
-
-    # current imperfect strategy: just use the statistics of the first SNV
-    ret <- ret[, c(.SD[1,],
-        new.refnt=paste0(refnt, collapse=''),
-        new.altnt=paste0(altnt, collapse=''),
-        altd=diff(range(scalt)), refd=diff(range(scref))),
-        by=mnv.id]
-
-    ret <- ret[altd <= max.read.diff & refd <= max.read.diff]
-    ret[, c('refnt', 'altnt', 'muttype', 'mutsig') := list(new.refnt, new.altnt, 'mnv', paste0(new.refnt, '>', new.altnt))]
-    ret[, c('new.refnt', 'new.altnt', 'refd', 'altd', 'mnv.id', 'rowid') := list(NULL, NULL, NULL, NULL, NULL, NULL)]
-
+    
     if (return.rowids)
         list(rowids=rowids, tab=ret)
     else
