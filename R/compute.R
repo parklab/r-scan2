@@ -1,3 +1,20 @@
+# For each mutation in `muts`, calculate the distance to the nearest
+# other event in `muts`. If `muts` contains multiple samples and `by.sample`=TRUE,
+# only consider distance to the nearest event in the same sample. Assumes
+# samples are designated by a column named "sample".
+#
+# XXX: Similar to find.nearest.germline, should choose one to keep and delete other.
+# This version is likely better (faster, less memory use) since it's totally
+# handled by data.table.
+compute.nearest <- function(muts, by.sample=TRUE) {
+    if (by.sample) {
+        muts[order(pos), nearest := pmin(c(Inf, diff(pos)), c(diff(pos), Inf)), by=.(sample, chr)]
+    } else {
+        muts[order(pos), nearest := pmin(c(Inf, diff(pos)), c(diff(pos), Inf)), by=.(chr)]
+    }
+}
+
+
 # look for hSNPs in ever-larger windows around this chunk. exit as soon as any
 # training hSNPs are found. when using MDA or PTA single cell WGA, there is
 # essentially no useful AB information in hSNPs > 100kb away, but perhaps this
