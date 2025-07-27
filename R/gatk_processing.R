@@ -317,7 +317,12 @@ annotate.gatk.candidate.loci <- function(gatk, snv.min.bulk.dp, snv.max.bulk.alt
                 (indel.allow.bulk.gt | bulk.gt == '0/0')
             )) &
             # N.B. talt >= 2 becomes a less useful cutoff as #cells increases..
-            dbsnp == '.' & talt >= 2]
+            # 07/2025: turns out there are entries in 1000 genomes phasing panel with
+            # high population AFs that are somehow not in dbsnp. When relaxing the
+            # bulk filters, must ensure no training sites become somatic candidates
+            # (or sites that were phased but weren't good enough to become training data)
+            # are admitted as somatic candidates.
+            talt >= 2 & dbsnp == '.' & training.site == FALSE & (is.na(phased.gt) | phased.gt == '')]
     } else if (mode == 'legacy') {
         gatk[, somatic.candidate :=
             ((muttype == 'snv' & balt <= snv.max.bulk.alt) |
