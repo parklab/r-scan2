@@ -877,7 +877,7 @@ setMethod("call.mutations", "SCAN2", function(object, target.fdr=0.01, quiet=FAL
     suppress.all.indels <- max(object@gatk$unique.cells, na.rm=TRUE) <= 2
 
     # Pass somatic mutations
-    object@gatk[, pass := static.filter == TRUE &
+    object@gatk[, pass := somatic.candidate & static.filter == TRUE &
         (muttype == 'snv' | (!suppress.all.indels & (!suppress.shared.indels | unique.cells == 1))) &
         lysis.fdr <= target.fdr & mda.fdr <= target.fdr]
 
