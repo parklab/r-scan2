@@ -53,11 +53,9 @@ setMethod("show.abmodel.training.sites", "SCAN2", function(object) {
     } else {
         # germline indels are not used for AB model training
         per.hap <- object@gatk[training.site==TRUE & muttype == 'snv', .N, by=phased.gt]
-        tdata <- object@gatk[training.site==TRUE & muttype=='snv']
-        cat('', nrow(tdata),
-            sprintf("phasing: %s=%d, %s=%d\n",
-                per.hap$phased.gt[1], per.hap$N[1],
-                per.hap$phased.gt[2], per.hap$N[2]))
+        cat('', sum(per.hap$N),
+            paste('phasing:', paste(per.hap[, paste0(phased.gt, '=', N)], collapse=', ')), '\n')
+
         neighbor.approx <- approx.abmodel.covariance(object, bin.breaks=10^(0:5))
         # Get average AB model covariance over chroms; do not consider sex chroms
         neighbor.approx <- neighbor.approx[!(chr %in% get.sex.chroms(object)), .(observed.cor=mean(observed.cor, na.rm=TRUE)), by=bin]
@@ -96,17 +94,20 @@ setMethod("show.abmodel.ab.distn", "SCAN2", function(object) {
     if (is.null(object@ab.estimates)) {
         cat(" (not computed)\n")
     } else {
-        s <- summary(object@gatk$gp.sd)
+        sex.chroms <- get.sex.chroms(object)
         cat('\n#       mean (0 is neutral):',
-            round(mean(object@gatk$gp.mu), 3), '\n')
+            object@gatk[!(chr %in% sex.chroms), round(mean(gp.mu), 3)], '\n')
+
+        s <- object@gatk[!(chr %in% sex.chroms), summary(gp.sd)]
         cat('#       uncertainty (Q25, median, Q75):',
             round(s['1st Qu.'], 3),
             round(s['Median'], 3),
             round(s['3rd Qu.'], 3), '\n')
         if ('training.site' %in% colnames(object@gatk) & nrow(object@gatk[training.site==TRUE]) > 0) {
-            xs <- round(object@gatk[training.site==TRUE & muttype == 'snv',
-                .(mean=mean(gp.mu), cor=cor(af, ab, use='complete.obs'))],3)
+            xs <- object@gatk[!(chr %in% sex.chroms) & training.site==TRUE & muttype == 'snv',
+                .(mean=round(mean(gp.mu),3), cor=round(cor(af, match.ab(af, ab), use='complete.obs'), 3))]
             cat('#       mean at training hSNPs:', xs$mean, '\n')
+            cat('#       (ab, VAF) correlation at training hSNPs:', xs$cor, '\n')
         }
     }
 })
@@ -190,7 +191,9 @@ setMethod("show.depth.profile", "SCAN2", function(object) {
     } else {
         mc=mean.coverage(object)
         cat(sprintf('\n#   mean depth: single cell: %0.2fx,   bulk: %0.2fx (max DP set to %d)\n',
-            mc['single.cell'], mc['bulk'], object@depth.profile$clamp.dp))
+            # as.integer(clamp.dp) - temporarily necessary to address bug in the SCAN2 snakemake
+            # pipeline that saved clamp.dp as a string.
+            mc['single.cell'], mc['bulk'], as.integer(object@depth.profile$clamp.dp)))
         for (mt in c('snv', 'indel')) {
             sfp <- object@static.filter.params[[mt]]
             dptab <- object@depth.profile$dptab
@@ -227,22 +230,35 @@ setMethod("show.call.mutations", "SCAN2", function(object) {
 })
 
 
+show.one.mutburden <- function(object, mt, chrtype, mb) {
+    cat(sprintf("#       %6s %5s: %6d calls,   %0.1f%% sens,   %0.3f callable Gbp,   %0.1f muts/haploid Gbp,   %0.1f muts per genome%s%s%s\n",
+        mt, substr(chrtype, 1, 5),
+        mb$ncalls, 100*mb$callable.sens, mb$callable.bp/1e9, mb$rate.per.gb, mutburden(object, muttype=mt),
+        # all "reason" entries are identical
+        ifelse(any(mb$reason != ''), paste0(' (INVALID: ', mb$reason[1], ')'), ''),
+        ifelse(any(mb$unsupported.filters), ' (INVALID: static.filter.params)', ''),
+        ifelse(mt=='indel' & (object@call.mutations$suppress.all.indels | object@call.mutations$suppress.shared.indels), ' (INVALID: cross-sample panel insufficient)', '')
+    ))
+}
+
 setGeneric("show.mutburden", function(object) standardGeneric("show.mutburden"))
 setMethod("show.mutburden", "SCAN2", function(object) {
     cat("#   Somatic mutation burden: ")
     if (is.null(object@mutburden)) {
         cat("(not computed)\n")
     } else {
-        cat('\n')
+        cat('trimmed mean using mutations in middle 50% of depth distn\n')
         for (mt in c('snv', 'indel')) {
-            mb <- object@mutburden[[mt]][2,]  # row 2 is middle 50%
-            cat(sprintf("#       %6s: %6d somatic,   %0.1f%% sens,   %0.3f callable Gbp,   %0.1f muts/haploid Gbp,   %0.1f muts per genome%s%s%s\n",
-                mt, mb$ncalls, 100*mb$callable.sens, mb$callable.bp/1e9, mb$rate.per.gb, mutburden(object, muttype=mt),
-                # all "reason" entries are identical
-                ifelse(any(mb$reason != ''), paste0(' (INVALID: ', mb$reason[1], ')'), ''),
-                ifelse(any(mb$unsupported.filters), ' (INVALID: static.filter.params)', ''),
-                ifelse(mt=='indel' & (object@call.mutations$suppress.all.indels | object@call.mutations$suppress.shared.indels), ' (INVALID: cross-sample panel insufficient)', '')
-            ))
+            mb <- object@mutburden[[mt]]   #[2,]  # row 2 is middle 50%
+            for (chrtype in c('autosomal', 'sex')) {
+                if (chrtype == 'sex') {
+                    for (chrom in names(mb[[chrtype]])) {
+                        show.one.mutburden(object=object, mt=mt, chrtype=chrom, mb[[chrtype]][[chrom]][2,])
+                    }
+                } else {
+                    show.one.mutburden(object=object, mt=mt, chrtype=chrtype, mb[[chrtype]][2,])
+                }
+            }
         }
     }
 })
