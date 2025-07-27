@@ -60,11 +60,11 @@ setMethod("show.abmodel.training.sites", "SCAN2", function(object) {
                 per.hap$phased.gt[2], per.hap$N[2]))
         neighbor.approx <- approx.abmodel.covariance(object, bin.breaks=10^(0:5))
         # Get average AB model covariance over chroms; do not consider sex chroms
-        neighbor.approx <- neighbor.approx[!(chr %in% get.sex.chroms(object)), .(observed.cor=mean(observed.cor, na.rm=TRUE)), by=cut]
+        neighbor.approx <- neighbor.approx[!(chr %in% get.sex.chroms(object)), .(observed.cor=mean(observed.cor, na.rm=TRUE)), by=bin]
         cors <- round(neighbor.approx$observed.cor, 3)
             cat('#       OBSERVED VAF correlation between neighboring hSNPs:\n')
-        cat('#           <10 bp', cors[1], '<100 bp', cors[2],
-            '<1000 bp', cors[3], '<10 kbp', cors[4], '<100 kbp', cors[5], '\n')
+        cat('#           <10 bp', cors[1], '| <100 bp', cors[2],
+            '| <1000 bp', cors[3], '| <10 kbp', cors[4], '| <100 kbp', cors[5], '\n')
         if ('resampled.training.site' %in% colnames(object@gatk)) {
             cat('#        ', nrow(object@gatk[resampled.training.site == TRUE & muttype == 'snv']),
                 'resampled hSNPs\n')
