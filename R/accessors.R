@@ -830,14 +830,41 @@ setMethod("mnv", "list", function(x, max.read.diff=2) {
 })
 
 
-helper.mnv <- function(tab, max.read.diff=2, return.rowids=FALSE) {
+# nearest.by.sample: Try for a sane default: when applied to multi-sample tables
+#   internally (e.g., passing(list) or data(list)), helper.mnv() is called on each
+#   sample individually, so compute.nearest(by.sample=TRUE) is fine. But if a user
+#   calls helper.mnv() on their own list of mutations, the list could already be
+#   multi-sample. Automate this by detecting a column named 'sample'.
+helper.mnv <- function(tab, max.read.diff=2, return.rowids=FALSE, nearest.by.sample='sample' %in% colnames(tab)) {
     # Is the distance to the nearest called SNV exactly 1? abs(diff(.)) addresses chromosome boundaries.
-    ret <- copy(tab)[, c('rowid', 'mnv') := list(1:.N, pmin(c(Inf,abs(diff(pos))), c(abs(diff(pos)),Inf))==1)]
+    #ret <- copy(tab)[, c('rowid', 'mnv') := list(1:.N, pmin(c(Inf,abs(diff(pos))), c(abs(diff(pos)),Inf))==1)]
     # As `mnv` switches from FALSE to TRUE, increment the ID counter.  Since there are two switches
     # per MNV (F->T, then T->F), naive incrementation would assign only odd IDs.
     # c(FALSE, mnv) - start the process outside of an MNV (FALSE) so that if
     #   the first row in tab is an MNV, it is detected.
-    ret <- ret[, mnv.id := ifelse(mnv, (cumsum(abs(diff(c(FALSE, mnv))))+1)/2, 0)][mnv.id > 0][, mnv := NULL]
+    #ret <- ret[, mnv.id := ifelse(mnv, (cumsum(abs(diff(c(FALSE, mnv))))+1)/2, 0)][mnv.id > 0][, mnv := NULL]
+
+    # Above strategy fails if two MNVs, which may be far apart in genomic coordinates, are
+    # in adjacent rows because there is no T->F transition between the two. E.g., in the
+    # following case one mnv.id would be assigned to all 4 rows.
+    #       chr      pos  refnt  altnt
+    #    <char>    <int> <char> <char>
+    # 1:   chr9 63782001      A      G
+    # 2:   chr9 63782002      C      A
+    # 3:   chr9 63782176      C      T
+    # 4:   chr9 63782177      C      G
+
+    # New method:
+    #  1. efficiently calculate distance to nearest mutation with compute.nearest()
+    #  2. only consider sites with nearest=1 (note: nearest is bidirectional)
+    #  3. detect boundaries between MNVs by finding where the distance between pos(mut_i)
+    #     and the next row pos(mut_i+1) > 1 (note: this is unidirectional)
+    ret <- copy(tab)[, rowid := 1:.N]
+
+    compute.nearest(ret, by.sample=nearest.by.sample)     # assigns 'nearest' by reference
+    ret[nearest == 1, mnv.id := cumsum(c(diff(pos), Inf) == 1)]
+    ret <- ret[!is.na(mnv.id)]
+    ret[, nearest := NULL]
     rowids <- c()
 
     if (nrow(ret) > 0) {
@@ -857,6 +884,9 @@ helper.mnv <- function(tab, max.read.diff=2, return.rowids=FALSE) {
     
         ret <- ret[altd <= max.read.diff & refd <= max.read.diff]
         ret[, c('refnt', 'altnt', 'muttype', 'mutsig') := list(new.refnt, new.altnt, 'mnv', paste0(new.refnt, '>', new.altnt))]
+        # special case of MNV with length 2: call it a DBS. really annoying to have to
+        # constantly do this manually.
+        ret[muttype == 'mnv' & nchar(altnt) == 2 & nchar(refnt) == 2, muttype := 'dbs']
         ret[, c('new.refnt', 'new.altnt', 'refd', 'altd', 'mnv.id', 'rowid') := list(NULL, NULL, NULL, NULL, NULL, NULL)]
     } else {
         # get rid of the columns so the 0-row table can be joined transparently
