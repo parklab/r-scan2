@@ -30,6 +30,7 @@ integrated.table.meta.cols <- c(
     mutsig='character',
     balt.lowmq='integer',
     phased.gt='character',
+    training.site='logical',
     nalleles='integer',
     unique.donors='integer',
     unique.cells='integer',
@@ -38,7 +39,6 @@ integrated.table.meta.cols <- c(
     sum.out='integer',
     sum.bulk='integer',
     somatic.candidate='logical',
-    training.site='logical',
     resampled.training.site='logical'
 )
 read.integrated.table.1sample <- function(path, sample.id, region=NULL, quiet=FALSE) {
@@ -377,14 +377,14 @@ gatk.resample.training.sites <- function(gatk, M=20, seed=0) {
 
     gatk[is.na(resampled.training.site), resampled.training.site := FALSE]
 
-    # reorder columns so that training.site and resampled.training.site, applicable to all single
-    # cells in the integrated table, are in the left block of columns. the right block of
+    # reorder columns so that resampled.training.site, applicable to all single
+    # cells in the integrated table, is in the left block of columns. the right block of
     # columns is intended to only contain per-sample read count data.
     #
     # must use column numbers because column names are not unique: each sample has a 'ref'
     # and 'alt' column.
     n.meta.cols <- length(integrated.table.meta.cols)
-    data.table::setcolorder(gatk, neworder=c(1:(n.meta.cols-2), ncol(gatk)-1:0, (n.meta.cols-1):(ncol(gatk)-2)))
+    data.table::setcolorder(gatk, neworder=c(1:(n.meta.cols-1), ncol(gatk), n.meta.cols:(ncol(gatk)-1)))
 
     return(ret)
 }
