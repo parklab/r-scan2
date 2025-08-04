@@ -268,7 +268,8 @@ make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf,
                 #p(amount=0, class='sticky', paste('mutsigs', i))
                 annotate.gatk.lowmq(sitewide, path=mmq1.tab, bulk=dummy.object@bulk, region=gr, quiet=quiet)
                 #p(amount=0, class='sticky', paste('lowmq', i))
-                annotate.gatk.phasing(sitewide, phasing.path=phased.vcf, region=gr, quiet=quiet)
+                annotate.gatk.phasing(sitewide, phasing.path=phased.vcf, region=gr, quiet=quiet,
+                    haploid.chroms=haploid.chroms(dummy.object))
                 #p(amount=0, class='sticky', paste('phase info', i))
                 annotate.gatk.panel(sitewide, panel.path=panel, region=gr, quiet=quiet)
                 #p(amount=0, class='sticky', paste('panel', i))
@@ -309,8 +310,7 @@ make.integrated.table <- function(dummy.object, mmq60.tab, mmq1.tab, phased.vcf,
     }
 
     # This is only true because we only support human and mouse
-    resampling.details <- gatk.select.and.resample.training.sites(gatk,
-        haploid.chroms=haploid.chroms(dummy.object))
+    resampling.details <- gatk.resample.training.sites(gatk)
     list(gatk=gatk, resampling.details=resampling.details)
 }
 

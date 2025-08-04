@@ -229,7 +229,7 @@ annotate.gatk.lowmq <- function(gatk, path, bulk, region, quiet=FALSE) {
 # To annotate phasing status (phased.hap1, phased.hap2) the estimated
 # phase needs to be joined to a single cell table with alt and ref read
 # counts. Based on phase, (alt,ref) maps to either (hap1,hap2) or (hap2,hap1).
-annotate.gatk.phasing <- function(gatk, phasing.path, region, quiet=FALSE) {
+annotate.gatk.phasing <- function(gatk, phasing.path, region, haploid.chroms, quiet=FALSE) {
     phase.data <- read.tabix.data(path=phasing.path, region=region, quiet=quiet,
         colClasses=list(character='chr'))
 
@@ -242,7 +242,17 @@ annotate.gatk.phasing <- function(gatk, phasing.path, region, quiet=FALSE) {
     if (length(unrecognized) > 0)
         stop(paste('phasing genotypes expected to be either 1|1, 0|1, 1|0 or ./., but found', unique(unrecognized), collapse='\n'))
 
-    gatk[phase.data, on=.(chr,pos,refnt,altnt), phased.gt := i.phasedgt]
+    gatk <- gatk[phase.data, on=.(chr,pos,refnt,altnt), phased.gt := i.phasedgt]
+
+    # Select the training sites. This does not exactly match legacy SCAN2, which
+    # excluded training sites based on one single cell characteristic (having phased GT!=./.)
+    gatk[, training.site := !is.na(phased.gt) &
+        # diploid chroms: 0|1 and 1|0 hets are informative, hom 1|1 are not
+        ((!(chr %in% haploid.chroms) & (!is.na(phased.gt) & phased.gt == '0|1' | phased.gt == '1|0')) |
+        # haploid chroms: 0|1 and 1|0 hets are artifacts and hom 1|1 is informative
+            (chr %in% haploid.chroms & !is.na(phased.gt) & phased.gt == '1|1')) & bulk.gt != './.']
+
+    gatk
 }
 
 
@@ -350,16 +360,8 @@ annotate.gatk.candidate.loci <- function(gatk, snv.min.bulk.dp, snv.max.bulk.alt
 #      CIGAR op filters (indel ops) is actually incorrect either way.
 # In any case, this likely has a relatively insignificant effect so we are leaving it as
 # it was in legacy calling for now.
-gatk.select.and.resample.training.sites <- function(gatk, haploid.chroms, M=20, seed=0) {
+gatk.resample.training.sites <- function(gatk, M=20, seed=0) {
     ret <- list()
-
-    # First set the training sites. This does not exactly match legacy SCAN2, which
-    # excluded training sites based on one single cell characteristic (having phased GT!=./.)
-    gatk[, training.site := !is.na(phased.gt) &
-        # diploid chroms: 0|1 and 1|0 hets are informative, hom 1|1 are not
-        ((!(chr %in% haploid.chroms) & (!is.na(phased.gt) & phased.gt == '0|1' | phased.gt == '1|0')) |
-        # haploid chroms: 0|1 and 1|0 hets are artifacts and hom 1|1 is informative
-            (chr %in% haploid.chroms & !is.na(phased.gt) & phased.gt == '1|1')) & bulk.gt != './.']
 
     for (mt in c('snv', 'indel')) {
         aux.data <- resample.germline(
