@@ -111,6 +111,77 @@ setMethod("version", "list", function(x) {
 })
 
 
+setGeneric("target.fdr", function(x) standardGeneric("target.fdr"))
+setMethod("target.fdr", "SCAN2", function(x) {
+    x@call.mutations$target.fdr
+})
+
+setMethod("target.fdr", "summary.SCAN2", function(x) {
+    x@call.mutations.and.mutburden$selected.target.fdr
+})
+
+setMethod("target.fdr", "list", function(x) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    setNames(sapply(x, target.fdr), name(x))
+})
+
+
+setGeneric("dptab", function(x, include.sex.chroms=FALSE) standardGeneric("dptab"))
+setMethod("dptab", "SCAN2", function(x, include.sex.chroms=FALSE) {
+    dptab <- x@depth.profile$dptab
+    if (include.sex.chroms)
+        dptab <- dptab + base::Reduce(`+`, x@depth.profile$dptabs.sex)
+    dptab
+})
+
+setMethod("dptab", "summary.SCAN2", function(x, include.sex.chroms=FALSE) {
+    dptab <- decompress.dt(x@depth.profile$dptab)
+    if (include.sex.chroms)
+        dptab <- dptab + base::Reduce(`+`, lapply(x@depth.profile$dptabs.sex, decompress.dt))
+    dptab
+})
+
+
+setGeneric("analyzable.basepairs", function(x, include.sex.chroms=FALSE) standardGeneric("analyzable.basepairs"))
+setMethod("analyzable.basepairs", "SCAN2", function(x, include.sex.chroms=FALSE) {
+    helper.analyzable.basepairs(x, dptab=dptab(x, include.sex.chroms=include.sex.chroms), sfps=x@static.filter.params)
+})
+
+setMethod("analyzable.basepairs", "summary.SCAN2", function(x, include.sex.chroms=FALSE) {
+    helper.analyzable.basepairs(x, dptab=dptab(x, include.sex.chroms=include.sex.chroms), sfps=x@static.filters$params)
+})
+
+setMethod("analyzable.basepairs", "list", function(x) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    do.call(rbind, lapply(setNames(x, name(x)), analyzable.basepairs))
+})
+
+helper.analyzable.basepairs <- function(x, dptab, sfps) {
+    sfp <- sfps$snv
+    if (sfp$min.sc.dp == 0)
+        warning('minimum single cell depth for SNV calling set to 0, analyzable basepairs may be > bulk accessible basepairs')
+    snv.bp <- sum(dptab[(sfp$min.sc.dp+1):nrow(dptab), (sfp$min.bulk.dp+1):ncol(dptab)])
+
+    sfp <- sfps$indel
+    if (sfp$min.sc.dp == 0)
+        warning('minimum single cell depth for indel calling set to 0, analyzable basepairs may be > bulk accessible basepairs')
+    indel.bp <- sum(dptab[(sfp$min.sc.dp+1):nrow(dptab), (sfp$min.bulk.dp+1):ncol(dptab)])
+
+    # IMPORTANT: dptab[,-1]: the first column is where bulk depth=0. In this (and most) project(s),
+    # bulk depth is 0 at generally unassayable (even unassembled, e.g. chr22's p-arm) regions. It
+    # is not useful to penalize PTA for not assaying these regions, as most would interpret a
+    # breadth-of-coverage number as the coverage of the assayable genome.
+    bulk.accessible.bp <- sum(dptab[,-1])
+
+    c(snv=snv.bp, indel=indel.bp, bulk.accessible=bulk.accessible.bp)
+}
+
 
 setGeneric("abmodel.cov", function(x, type=c('fit', 'neighbor', 'neighbor.corrected', 'all')) standardGeneric("abmodel.cov"))
 setMethod("abmodel.cov", "SCAN2", function(x, type=c('fit', 'neighbor', 'neighbor.corrected', 'all')) {
@@ -897,4 +968,67 @@ helper.mnv <- function(tab, max.read.diff=2, return.rowids=FALSE, nearest.by.sam
         list(rowids=rowids, tab=ret)
     else
         ret
+}
+
+
+# this might not fit in "accessors.R" since it isn't really about accessing data
+# but rather computing summarizations
+setGeneric("callstats", function(x, pdata=passing(x)) standardGeneric("callstats"))
+setMethod("callstats", "SCAN2", function(x, pdata=passing(x)) {
+    stop('not implemented for full SCAN2 objects, please use a summary object instead')
+})
+
+setMethod("callstats", "summary.SCAN2", function(x, pdata=passing(x)) {
+    helper.callstats(x, pdata)
+})
+
+setMethod("callstats", "list", function(x, pdata=passing(x)) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+
+    rbindlist(lapply(x, function(s) helper.callstats(x=s, pdata=pdata)))
+})
+
+helper.callstats <- function(x, pdata=passing(x),
+    # These false positive rates were derived in Luquette et al, Nat Genet 2022
+    # from synthetic data with known spike-in somatic mutations at various rates.
+    # FPRs in false calls per million analyzable basepairs.
+    fpr.per.mb.snv=0.01313788,
+    fpr.per.mb.indel=0.0007298824)
+{
+    this.sample <- name(x)
+    abp <- analyzable.basepairs(x)
+
+    # pre-computed sensitivities on all resampled training sites
+    sfp <- x@static.filters$params$snv
+    snv.sens <- x@call.mutations.and.mutburden$metrics[muttype == 'snv' & min.sc.dp == sfp$min.sc.dp & max.bulk.alt == sfp$max.bulk.alt & target.fdr == target.fdr(x), n.resampled.training.pass/total.resampled]
+
+    sfp <- x@static.filters$params$indel
+    indel.sens <- x@call.mutations.and.mutburden$metrics[muttype == 'indel' & min.sc.dp == sfp$min.sc.dp & max.bulk.alt == sfp$max.bulk.alt & target.fdr == target.fdr(x), n.resampled.training.pass/total.resampled]
+
+    this.pdata <- pdata[sample == this.sample]
+    snv.calls <- this.pdata[muttype=='snv', sum(pass)]
+    snv.fps <- min(snv.calls, abp['snv']/1e6 * fpr.per.mb.snv)
+    snv.fdr <- ifelse(snv.calls == 0, 0, snv.fps/snv.calls)
+
+    indel.calls <- this.pdata[muttype=='indel', sum(pass)]
+    indel.fps <- min(indel.calls, abp['indel']/1e6 * fpr.per.mb.indel)
+    indel.fdr <- ifelse(indel.calls == 0, 0, indel.fps/indel.calls)
+
+    dnv.calls <- this.pdata[muttype=='dnv', sum(pass)]
+
+    rbind(
+        melt(data.table(sample=this.sample, muttype=NA, sequencing.depth=mean.coverage(x)[1]), id.vars=1:2),
+        melt(data.table(sample=this.sample,
+            muttype=c('snv', 'indel', 'dnv'),
+            sens=c(snv.sens, indel.sens, NA),
+            # as.numeric(.) several times below: melt will warn (and do this anyway) otherwise
+            analyzable.basepairs=as.numeric(abp[c('snv', 'indel', 'snv')]),
+            fraction.genome.analyzable=as.numeric(abp[c('snv', 'indel', 'snv')]/abp['bulk.accessible']),
+            calls=as.numeric(c(snv.calls, indel.calls, dnv.calls)),
+            fps=c(snv.fps, indel.fps, snv.fps),
+            fdr=c(snv.fdr, indel.fdr, snv.fdr)), id.vars=1:2)
+    )
 }
