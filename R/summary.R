@@ -583,7 +583,10 @@ summarize.mutsig.rescue <- function(object, quiet=FALSE) {
 #      recalculated when changing target.fdr.
 summarize.call.mutations.and.mutburden <- function(object,
     params.to.test=list(
-        min.sc.dp=unique(as.integer(seq(object@static.filter.params$snv$min.sc.dp, quantile(object@gatk[training.site==T]$dp, probs=0.75), length.out=4))),
+        # important: must include both SNV and indel cutoffs here or else there won't be a summary
+        # applicable to indel performance.
+        min.sc.dp=sort(c(max(object@static.filter.params$snv$min.sc.dp, object@static.filter.params$indel$min.sc.dp),
+                       unique(as.integer(seq(min(object@static.filter.params$snv$min.sc.dp, object@static.filter.params$indel$min.sc.dp), quantile(object@gatk[training.site==T]$dp, probs=0.75), length.out=4))))),
         max.bulk.alt=c(0:3)),                     # 0 is default
         # max.bulk{af,binom.prob} don't make sense for a typical user;
         # they're both only interesting when trying to call clonal mutations,
