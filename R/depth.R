@@ -104,14 +104,28 @@ compute.callable.region <- function(path, sc.sample, bulk.sample, min.sc.dp, min
 
 
 
-setGeneric("mean.coverage", function(object) standardGeneric("mean.coverage"))
-setMethod("mean.coverage", "SCAN2", function(object) {
-    check.slots(object, 'depth.profile')
+setGeneric("mean.coverage", function(x, include.sex.chroms=FALSE) standardGeneric("mean.coverage"))
+setMethod("mean.coverage", "SCAN2", function(x, include.sex.chroms=FALSE) {
+    check.slots(x, 'depth.profile')
+    helper.mean.coverage(x, dptab(x, include.sex.chroms=include.sex.chroms))
+})
 
+setMethod("mean.coverage", "summary.SCAN2", function(x, include.sex.chroms=FALSE) {
+    helper.mean.coverage(x, dptab(x, include.sex.chroms=include.sex.chroms))
+})
+
+setMethod("mean.coverage", "list", function(x, include.sex.chroms=FALSE) {
+    classes <- sapply(x, class)
+    if (!all(classes == 'SCAN2') & !all(classes == 'summary.SCAN2')) {
+        stop('x must be a list of SCAN2 or summary.SCAN2 objects only')
+    }
+    do.call(rbind, lapply(setNames(x, name(x)), mean.coverage))
+})
+
+helper.mean.coverage <- function(x, dptab) {
     # rows correspond to single cell depth values, starting at 0 (row 1 = #bases at dp=0,
     # row 2 = #bases at dp=1, ...). rownames() actually records dp values as strings.
     # columns correspond to bulk in the same way
-    dptab <- object@depth.profile$dptab
     c(single.cell=sum(rowSums(dptab) * as.numeric(rownames(dptab))) / sum(dptab),
       bulk=sum(colSums(dptab) * as.numeric(colnames(dptab))) / sum(dptab))
-})
+}
