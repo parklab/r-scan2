@@ -957,7 +957,7 @@ helper.mnv <- function(tab, max.read.diff=2, return.rowids=FALSE, nearest.by.sam
         ret[, c('refnt', 'altnt', 'muttype', 'mutsig') := list(new.refnt, new.altnt, 'mnv', paste0(new.refnt, '>', new.altnt))]
         # special case of MNV with length 2: call it a DBS. really annoying to have to
         # constantly do this manually.
-        ret[muttype == 'mnv' & nchar(altnt) == 2 & nchar(refnt) == 2, muttype := 'dbs']
+        ret[muttype == 'mnv' & nchar(altnt) == 2 & nchar(refnt) == 2, muttype := 'dnv']
         ret[, c('new.refnt', 'new.altnt', 'refd', 'altd', 'mnv.id', 'rowid') := list(NULL, NULL, NULL, NULL, NULL, NULL)]
     } else {
         # get rid of the columns so the 0-row table can be joined transparently
