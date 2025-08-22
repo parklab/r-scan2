@@ -1009,15 +1009,21 @@ helper.callstats <- function(x, pdata=passing(x),
     indel.sens <- x@call.mutations.and.mutburden$metrics[muttype == 'indel' & min.sc.dp == sfp$min.sc.dp & max.bulk.alt == sfp$max.bulk.alt & target.fdr == target.fdr(x), n.resampled.training.pass/total.resampled]
 
     this.pdata <- pdata[sample == this.sample]
-    snv.calls <- this.pdata[muttype=='snv', sum(pass)]
+    snv.calls <- 0
+    if (nrow(this.pdata[muttype=='snv', sum(pass)]))
+        snv.calls <- this.pdata[muttype=='snv', sum(pass)]
     snv.fps <- min(snv.calls, abp['snv']/1e6 * fpr.per.mb.snv)
     snv.fdr <- ifelse(snv.calls == 0, 0, snv.fps/snv.calls)
 
-    indel.calls <- this.pdata[muttype=='indel', sum(pass)]
+    indel.calls <- 0
+    if (nrow(this.pdata[muttype=='indel', sum(pass)]))
+        indel.calls <- this.pdata[muttype=='indel', sum(pass)]
     indel.fps <- min(indel.calls, abp['indel']/1e6 * fpr.per.mb.indel)
     indel.fdr <- ifelse(indel.calls == 0, 0, indel.fps/indel.calls)
 
-    dnv.calls <- this.pdata[muttype=='dnv', sum(pass)]
+    dnv.calls <- 0
+    if (nrow(this.pdata[muttype=='dnv', sum(pass)]))
+        dnv.calls <- this.pdata[muttype=='dnv', sum(pass)]
 
     rbind(
         melt(data.table(sample=this.sample, muttype=NA, sequencing.depth=mean.coverage(x)[1]), id.vars=1:2),
